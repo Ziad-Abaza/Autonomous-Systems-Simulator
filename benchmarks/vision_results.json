@@ -1,0 +1,16 @@
+{
+  "frame_dimensions": "84x84x3",
+  "software_procedural_ms": 0.185,
+  "software_fps": 5397.4,
+  "opengl_3d_render_only_ms": 0.401,
+  "transfer_legacy_fbo_read_ms": 0.205,
+  "transfer_preallocated_read_into_ms": 0.159,
+  "transfer_double_buffered_pbo_ms": 0.196,
+  "total_3d_frame_latency_ms": 0.56,
+  "total_3d_fps": 1786.5,
+  "env_step_vector_only_ms": 0.561,
+  "env_step_vector_sps": 1782.8,
+  "env_step_vision_ms": 0.576,
+  "env_step_vision_sps": 1736.2,
+  "transfer_speedup_vs_legacy": 1.29
+}

@@ -1,6 +1,7 @@
 """
-Interactive visual Track Editor supporting spline control points, variable road width,
-elevation, banking, boundary selection, spawn placement, and 3D mesh regeneration.
+Interactive visual Environment Editor supporting track spline geometry, road width,
+elevation, banking, curvature analysis, entity placement (obstacles, barriers, cones, signs, lights),
+visual gizmos, and bidirectional scene selection.
 """
 
 from __future__ import annotations
@@ -8,31 +9,83 @@ import math
 from typing import List, Dict, Any, Optional, Tuple
 import pygame
 from sim_core.track.road_definition import RoadDefinition, ControlPoint, RoadBoundaryConfig, SpawnPoint
-from sim_core.math_utils import Vec2, Vec3, clamp
+from sim_core.world.entity import (
+    WorldEntity, StaticObstacle, Barrier, TrafficCone,
+    TrafficSign, TrafficLight, create_entity
+)
+from sim_core.math_utils import Vec2, Vec3, clamp, normalize_angle
 
 
 class VisualTrackEditor:
     """
-    Top-down 2D interactive editor for authoring tracks with control points,
-    checkpoints, spawn location, and spline curves.
+    Top-down 2D interactive editor for authoring tracks and placing environment entities.
     """
-    def __init__(self, road_def: RoadDefinition):
+    def __init__(self, road_def: RoadDefinition, entities: Optional[List[WorldEntity]] = None):
         self.road_def = road_def
+        self.entities = entities if entities is not None else []
+
+        # Selection state
         self.selected_point_idx: Optional[int] = 0 if road_def.control_points else None
+        self.selected_entity_id: Optional[str] = None
+        self.selected_checkpoint_idx: Optional[int] = None
+        self.is_spawn_selected: bool = False
+
+        # Dragging / Interaction state
         self.is_dragging_point = False
+        self.is_dragging_entity = False
+        self.is_rotating_entity = False
+        self.is_dragging_width = False
         self.is_panning = False
-        self.is_placing_spawn = False
+
+        # Placement tool mode: None, "obstacle", "barrier", "cone", "traffic_sign", "traffic_light", "spawn"
+        self.active_tool: Optional[str] = None
+
         self._pan_start = (0, 0)
         self._orig_view_offset = (0.0, 0.0)
+        self._drag_start_pos = (0.0, 0.0)
 
         # 2D view transformation (world coordinates to screen pixels)
         self.view_offset_x = 0.0
         self.view_offset_y = 0.0
         self.zoom = 4.0  # pixels per meter
 
+        # Display toggles
+        self.show_curvature = True
+        self.show_tangents = True
+        self.show_width_handles = True
+        self.show_grid = True
+
+    def get_selected_entity(self) -> Optional[WorldEntity]:
+        if self.selected_entity_id is None:
+            return None
+        for ent in self.entities:
+            if ent.entity_id == self.selected_entity_id:
+                return ent
+        return None
+
+    def select_entity(self, entity_id: Optional[str]) -> None:
+        self.selected_entity_id = entity_id
+        if entity_id is not None:
+            self.selected_point_idx = None
+            self.is_spawn_selected = False
+            self.selected_checkpoint_idx = None
+
+    def select_control_point(self, idx: Optional[int]) -> None:
+        self.selected_point_idx = idx
+        if idx is not None:
+            self.selected_entity_id = None
+            self.is_spawn_selected = False
+            self.selected_checkpoint_idx = None
+
+    def select_spawn(self) -> None:
+        self.is_spawn_selected = True
+        self.selected_point_idx = None
+        self.selected_entity_id = None
+        self.selected_checkpoint_idx = None
+
     def world_to_screen(self, wx: float, wy: float, screen_center_x: float, screen_center_y: float) -> Tuple[int, int]:
         sx = int(screen_center_x + (wx + self.view_offset_x) * self.zoom)
-        sy = int(screen_center_y - (wy + self.view_offset_y) * self.zoom)  # Y inverted for screen
+        sy = int(screen_center_y - (wy + self.view_offset_y) * self.zoom)
         return sx, sy
 
     def screen_to_world(self, sx: int, sy: int, screen_center_x: float, screen_center_y: float) -> Tuple[float, float]:
@@ -41,62 +94,110 @@ class VisualTrackEditor:
         return wx, wy
 
     def handle_mouse_down(self, pos: Tuple[int, int], button: int, screen_center: Tuple[float, float]) -> bool:
-        """Handles mouse clicks for point selection, dragging, spawn placement, and panning."""
+        """Handles mouse clicks for selection, dragging, panning, and entity placement."""
         sc_x, sc_y = screen_center
+        wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
 
-        # Middle click or Right click on canvas: Pan
-        if button == 2:  # Middle button
+        # 1. Middle button: Pan
+        if button == 2:
             self.is_panning = True
             self._pan_start = pos
             self._orig_view_offset = (self.view_offset_x, self.view_offset_y)
             return True
 
-        # Mode: Placing Spawn
-        if self.is_placing_spawn and button == 1:
-            wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
-            self.road_def.spawn_point.x = round(wx, 1)
-            self.road_def.spawn_point.y = round(wy, 1)
-            self.is_placing_spawn = False
+        # 2. Tool placement mode (Click canvas to place entity)
+        if self.active_tool and button == 1:
+            if self.active_tool == "spawn":
+                self.road_def.spawn_point.x = round(wx, 1)
+                self.road_def.spawn_point.y = round(wy, 1)
+                self.select_spawn()
+            elif self.active_tool in ("obstacle", "barrier", "cone", "traffic_sign", "traffic_light"):
+                new_ent = create_entity(
+                    entity_type=self.active_tool,
+                    pos=Vec3(round(wx, 1), round(wy, 1), 0.0),
+                    yaw=0.0
+                )
+                self.entities.append(new_ent)
+                self.select_entity(new_ent.entity_id)
+            self.active_tool = None
             return True
 
-        # Check if clicked on Spawn Point
+        # 3. Check click on placed entities
+        for ent in reversed(self.entities):
+            ex, ey = ent.pos.x, ent.pos.y
+            esx, esy = self.world_to_screen(ex, ey, sc_x, sc_y)
+            dx = pos[0] - esx
+            dy = pos[1] - esy
+            hit_r = max(14, int(max(getattr(ent, 'length', 2.0), getattr(ent, 'width', 2.0)) * 0.5 * self.zoom))
+            if dx * dx + dy * dy <= (hit_r * hit_r):
+                if button == 1:
+                    self.select_entity(ent.entity_id)
+                    self.is_dragging_entity = True
+                    self._drag_start_pos = (wx, wy)
+                    return True
+                elif button == 3:  # Right click: Delete entity
+                    self.entities.remove(ent)
+                    if self.selected_entity_id == ent.entity_id:
+                        self.selected_entity_id = None
+                    return True
+
+        # 4. Check click on Spawn Point
         sp = self.road_def.spawn_point
         sp_sx, sp_sy = self.world_to_screen(sp.x, sp.y, sc_x, sc_y)
         if (pos[0] - sp_sx) ** 2 + (pos[1] - sp_sy) ** 2 <= 144:
             if button == 1:
-                self.selected_point_idx = None
+                self.select_spawn()
                 return True
 
-        # Check if clicked on any control point
+        # 5. Check click on control points
         for i, cp in enumerate(self.road_def.control_points):
             sx, sy = self.world_to_screen(cp.x, cp.y, sc_x, sc_y)
             dx = pos[0] - sx
             dy = pos[1] - sy
-            if dx * dx + dy * dy <= 144:  # 12px radius
-                self.selected_point_idx = i
-                if button == 1:  # Left click: start drag
+            if dx * dx + dy * dy <= 169:  # 13px radius
+                self.select_control_point(i)
+                if button == 1:
                     self.is_dragging_point = True
                     return True
-                elif button == 3:  # Right click: delete point if >= 4 points
+                elif button == 3:  # Right click: Delete control point if > 3 points
                     if len(self.road_def.control_points) > 3:
                         self.road_def.control_points.pop(i)
                         self.selected_point_idx = max(0, i - 1)
                         return True
 
-        # Right click on empty space: pan
+        # 6. Check click on segment between control points to INSERT a point
+        if button == 1 and len(self.road_def.control_points) >= 2:
+            cps = self.road_def.control_points
+            n = len(cps)
+            num_segs = n if self.road_def.is_closed else (n - 1)
+            for i in range(num_segs):
+                p1 = cps[i]
+                p2 = cps[(i + 1) % n]
+                s1x, s1y = self.world_to_screen(p1.x, p1.y, sc_x, sc_y)
+                s2x, s2y = self.world_to_screen(p2.x, p2.y, sc_x, sc_y)
+                dist_to_seg = self._dist_point_to_line_segment(pos[0], pos[1], s1x, s1y, s2x, s2y)
+                if dist_to_seg < 10.0:  # Within 10 pixels of line
+                    insert_idx = i + 1
+                    interp_width = (p1.width + p2.width) * 0.5
+                    new_cp = ControlPoint(x=round(wx, 1), y=round(wy, 1), z=(p1.z + p2.z) * 0.5, width=interp_width)
+                    self.road_def.control_points.insert(insert_idx, new_cp)
+                    self.select_control_point(insert_idx)
+                    self.is_dragging_point = True
+                    return True
+
+        # 7. Right click on empty space: Pan view
         if button == 3:
             self.is_panning = True
             self._pan_start = pos
             self._orig_view_offset = (self.view_offset_x, self.view_offset_y)
             return True
 
-        # Left click on empty space: add new control point
+        # 8. Left click on empty space: Append control point at clicked location
         if button == 1:
-            wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
             insert_idx = (self.selected_point_idx + 1) if self.selected_point_idx is not None else len(self.road_def.control_points)
             new_cp = ControlPoint(x=round(wx, 1), y=round(wy, 1), z=0.0, width=12.0)
             self.road_def.control_points.insert(insert_idx, new_cp)
-            self.selected_point_idx = insert_idx
+            self.select_control_point(insert_idx)
             self.is_dragging_point = True
             return True
 
@@ -104,12 +205,14 @@ class VisualTrackEditor:
 
     def handle_mouse_up(self) -> None:
         self.is_dragging_point = False
+        self.is_dragging_entity = False
+        self.is_rotating_entity = False
+        self.is_dragging_width = False
         self.is_panning = False
 
     def handle_mouse_wheel(self, y_offset: int) -> None:
-        """Zooms centered at current view."""
         factor = 1.15 if y_offset > 0 else (1.0 / 1.15)
-        self.zoom = clamp(self.zoom * factor, 0.5, 30.0)
+        self.zoom = clamp(self.zoom * factor, 0.5, 35.0)
 
     def handle_mouse_move(self, pos: Tuple[int, int], screen_center: Tuple[float, float]) -> None:
         sc_x, sc_y = screen_center
@@ -126,6 +229,24 @@ class VisualTrackEditor:
                 self.road_def.control_points[self.selected_point_idx].x = round(wx, 1)
                 self.road_def.control_points[self.selected_point_idx].y = round(wy, 1)
 
+        elif self.is_dragging_entity and self.selected_entity_id is not None:
+            ent = self.get_selected_entity()
+            if ent:
+                wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
+                ent.pos.x = round(wx, 1)
+                ent.pos.y = round(wy, 1)
+
+    def _dist_point_to_line_segment(self, px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+        dx = x2 - x1
+        dy = y2 - y1
+        l2 = dx * dx + dy * dy
+        if l2 == 0.0:
+            return math.hypot(px - x1, py - y1)
+        t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / l2))
+        proj_x = x1 + t * dx
+        proj_y = y1 + t * dy
+        return math.hypot(px - proj_x, py - proj_y)
+
     def draw_editor(
         self,
         surface: pygame.Surface,
@@ -134,26 +255,32 @@ class VisualTrackEditor:
         track_spline: Any,
         checkpoints: Optional[List[Dict[str, Any]]] = None
     ) -> None:
-        """Renders 2D top-down track geometry, control points, checkpoints, and spawn."""
+        """Renders comprehensive 2D top-down track geometry, visual gizmos, and entities."""
         sc_x = screen_rect.centerx
         sc_y = screen_rect.centery
 
-        # Grid lines
-        grid_step = int(10.0 * self.zoom)
-        if grid_step > 15:
-            ox = int(sc_x + self.view_offset_x * self.zoom) % grid_step
-            oy = int(sc_y - self.view_offset_y * self.zoom) % grid_step
-            for x in range(screen_rect.left + ox, screen_rect.right, grid_step):
-                pygame.draw.line(surface, (35, 40, 50, 100), (x, screen_rect.top), (x, screen_rect.bottom), 1)
-            for y in range(screen_rect.top + oy, screen_rect.bottom, grid_step):
-                pygame.draw.line(surface, (35, 40, 50, 100), (screen_rect.left, y), (screen_rect.right, y), 1)
+        # 1. Background Grid Lines
+        if self.show_grid:
+            grid_step = int(10.0 * self.zoom)
+            if grid_step > 15:
+                ox = int(sc_x + self.view_offset_x * self.zoom) % grid_step
+                oy = int(sc_y - self.view_offset_y * self.zoom) % grid_step
+                for x in range(screen_rect.left + ox, screen_rect.right, grid_step):
+                    pygame.draw.line(surface, (30, 36, 46, 120), (x, screen_rect.top), (x, screen_rect.bottom), 1)
+                for y in range(screen_rect.top + oy, screen_rect.bottom, grid_step):
+                    pygame.draw.line(surface, (30, 36, 46, 120), (screen_rect.left, y), (screen_rect.right, y), 1)
 
-        # 1. Draw spline centerline and boundary ribbons if samples exist
+        # 2. Spline Centerline with Curvature Visualization & Road Boundaries
         if track_spline and track_spline.samples:
+            samples = track_spline.samples
+            m = len(samples)
+
             pts_center = []
             pts_left = []
             pts_right = []
-            for s in track_spline.samples:
+            curvatures = []
+
+            for i, s in enumerate(samples):
                 sx, sy = self.world_to_screen(s.pos.x, s.pos.y, sc_x, sc_y)
                 pts_center.append((sx, sy))
 
@@ -165,14 +292,48 @@ class VisualTrackEditor:
                 pts_left.append(self.world_to_screen(lx, ly, sc_x, sc_y))
                 pts_right.append(self.world_to_screen(rx, ry, sc_x, sc_y))
 
-            if len(pts_center) > 2:
-                # Road boundaries
-                pygame.draw.lines(surface, (170, 175, 185, 200), track_spline.is_closed, pts_left, 2)
-                pygame.draw.lines(surface, (170, 175, 185, 200), track_spline.is_closed, pts_right, 2)
-                # Centerline
-                pygame.draw.lines(surface, (255, 215, 0, 180), track_spline.is_closed, pts_center, 1)
+                # Curvature estimate: rate of heading change
+                next_s = samples[(i + 1) % m]
+                prev_s = samples[(i - 1) % m]
+                t_next = math.atan2(next_s.tangent.y, next_s.tangent.x)
+                t_prev = math.atan2(prev_s.tangent.y, prev_s.tangent.x)
+                d_theta = abs(normalize_angle(t_next - t_prev))
+                ds = max(0.1, (next_s.s - prev_s.s) % track_spline.total_length if track_spline.is_closed else 2.0)
+                curvatures.append(d_theta / ds)
 
-        # 2. Draw Checkpoints gates and direction arrows
+            if len(pts_center) > 2:
+                # Road Boundaries
+                pygame.draw.lines(surface, (160, 170, 185, 210), track_spline.is_closed, pts_left, 2)
+                pygame.draw.lines(surface, (160, 170, 185, 210), track_spline.is_closed, pts_right, 2)
+
+                # Curvature-colored centerline segments
+                num_draw = m if track_spline.is_closed else (m - 1)
+                for i in range(num_draw):
+                    k = curvatures[i]
+                    p1 = pts_center[i]
+                    p2 = pts_center[(i + 1) % m]
+                    if not self.show_curvature or k < 0.02:
+                        color = (0, 220, 255)  # Gentle / Straight
+                    elif k < 0.05:
+                        color = (255, 200, 40)  # Moderate corner
+                    else:
+                        color = (255, 60, 60)   # Sharp turn / Hairpin
+                    pygame.draw.line(surface, color, p1, p2, 2)
+
+                # Centerline Direction Arrows (Chevrons) every ~20 samples
+                if self.show_tangents:
+                    step_arrow = max(8, int(25.0 / max(0.5, track_spline.total_length / max(1, m))))
+                    for i in range(0, m, step_arrow):
+                        s = samples[i]
+                        cx, cy = pts_center[i]
+                        tan = s.tangent
+                        arr_len = int(12 * (self.zoom / 4.0))
+                        arr_len = max(8, min(20, arr_len))
+                        ax = int(cx + tan.x * arr_len)
+                        ay = int(cy - tan.y * arr_len)
+                        pygame.draw.line(surface, (0, 255, 200), (cx, cy), (ax, ay), 2)
+
+        # 3. Checkpoints Gates Gizmo
         if checkpoints:
             for cp in checkpoints:
                 gl = cp['gate_left']
@@ -180,55 +341,166 @@ class VisualTrackEditor:
                 slx, sly = self.world_to_screen(gl.x, gl.y, sc_x, sc_y)
                 srx, sry = self.world_to_screen(gr.x, gr.y, sc_x, sc_y)
 
-                # Gate line
-                cp_color = (0, 230, 200) if cp['index'] == 0 else (80, 200, 140, 160)
-                pygame.draw.line(surface, cp_color, (slx, sly), (srx, sry), 2)
+                is_start = (cp['index'] == 0)
+                cp_color = (0, 255, 180) if is_start else (70, 190, 130, 180)
+                pygame.draw.line(surface, cp_color, (slx, sly), (srx, sry), 2 if not is_start else 3)
 
-                # Direction arrow in the center of gate
                 c_pos = cp.get('pos')
                 c_tan = cp.get('tangent')
                 if c_pos and c_tan:
                     cx, cy = self.world_to_screen(c_pos.x, c_pos.y, sc_x, sc_y)
-                    arr_len = int(14 * (self.zoom / 4.0))
-                    arr_len = max(8, min(24, arr_len))
+                    arr_len = 16
                     tan_2d = Vec2(c_tan.x, c_tan.y).normalized()
                     ax = int(cx + tan_2d.x * arr_len)
                     ay = int(cy - tan_2d.y * arr_len)
                     pygame.draw.line(surface, cp_color, (cx, cy), (ax, ay), 2)
 
-        # 3. Draw control points and connecting polyline
+                    # Gate badge
+                    badge = font.render(f"CP {cp['index']}", True, cp_color)
+                    surface.blit(badge, (srx + 6, sry - 8))
+
+        # 4. Connecting Reference Lines Between Control Points
         cp_screen_pts = []
+        for cp in self.road_def.control_points:
+            cp_screen_pts.append(self.world_to_screen(cp.x, cp.y, sc_x, sc_y))
+        if len(cp_screen_pts) > 1:
+            pygame.draw.lines(surface, (70, 110, 170, 70), self.road_def.is_closed, cp_screen_pts, 1)
+
+        # 5. Render Placed World Entities
+        for ent in self.entities:
+            self._draw_entity_gizmo(surface, ent, sc_x, sc_y, font)
+
+        # 6. Render Control Points & Visual Handles
         for i, cp in enumerate(self.road_def.control_points):
-            sx, sy = self.world_to_screen(cp.x, cp.y, sc_x, sc_y)
-            cp_screen_pts.append((sx, sy))
-
+            sx, sy = cp_screen_pts[i]
             is_sel = (i == self.selected_point_idx)
-            color = (255, 80, 80) if is_sel else (80, 180, 255)
-            radius = 9 if is_sel else 6
 
+            color = (255, 80, 80) if is_sel else (80, 180, 255)
+            radius = 10 if is_sel else 7
+
+            # Outer ring
             pygame.draw.circle(surface, color, (sx, sy), radius)
             pygame.draw.circle(surface, (255, 255, 255), (sx, sy), radius, 2)
 
-            # Label index and width
-            lbl = font.render(f"P{i} ({cp.width:.1f}m)", True, (240, 240, 240))
-            surface.blit(lbl, (sx + 10, sy - 12))
+            # Selected Control Point: Width handles & Banking badge
+            if is_sel and self.show_width_handles:
+                # Selection indicator ring
+                pygame.draw.circle(surface, (255, 220, 0), (sx, sy), radius + 5, 1)
 
-        # Connecting straight reference lines between control points
-        if len(cp_screen_pts) > 1:
-            pygame.draw.lines(surface, (80, 130, 200, 90), self.road_def.is_closed, cp_screen_pts, 1)
+                # Road width preview circle
+                w_pixels = int(cp.width * 0.5 * self.zoom)
+                pygame.draw.circle(surface, (255, 255, 255, 80), (sx, sy), w_pixels, 1)
 
-        # 4. Draw Spawn Point Indicator
+                # Detailed metadata label
+                elev_str = f"Z: {cp.z:+.1f}m" if cp.z != 0 else ""
+                bank_str = f"Bank: {cp.banking:+.0f}°" if cp.banking != 0 else ""
+                badge_text = f"P{i} ({cp.width:.1f}m) {elev_str} {bank_str}".strip()
+                lbl = font.render(badge_text, True, (255, 240, 150))
+                surface.blit(lbl, (sx + 12, sy - 14))
+            else:
+                lbl = font.render(f"P{i}", True, (220, 225, 235))
+                surface.blit(lbl, (sx + 10, sy - 10))
+
+        # 7. Render Spawn Point Indicator
         sp = self.road_def.spawn_point
         spx, spy = self.world_to_screen(sp.x, sp.y, sc_x, sc_y)
-        pygame.draw.circle(surface, (0, 255, 120), (spx, spy), 8)
-        arrow_len = 24
+        is_sp_sel = self.is_spawn_selected
+
+        col_sp = (0, 255, 120)
+        pygame.draw.circle(surface, col_sp, (spx, spy), 9)
+        if is_sp_sel:
+            pygame.draw.circle(surface, (255, 220, 0), (spx, spy), 14, 2)
+
+        # Vehicle footprint box preview (4.5m x 1.8m)
+        v_hl = 2.25 * self.zoom
+        v_hw = 0.9 * self.zoom
+        cos_y = math.cos(sp.yaw)
+        sin_y = math.sin(sp.yaw)
+        corners = [
+            (spx + cos_y * v_hl - sin_y * v_hw, spy - (sin_y * v_hl + cos_y * v_hw)),
+            (spx - cos_y * v_hl - sin_y * v_hw, spy - (-sin_y * v_hl + cos_y * v_hw)),
+            (spx - cos_y * v_hl + sin_y * v_hw, spy - (-sin_y * v_hl - cos_y * v_hw)),
+            (spx + cos_y * v_hl + sin_y * v_hw, spy - (sin_y * v_hl - cos_y * v_hw)),
+        ]
+        pygame.draw.polygon(surface, (0, 255, 120, 90), [(int(x), int(y)) for x, y in corners], 1)
+
+        # Forward orientation arrow
+        arrow_len = int(28 * (self.zoom / 4.0))
         ax = int(spx + math.cos(sp.yaw) * arrow_len)
         ay = int(spy - math.sin(sp.yaw) * arrow_len)
-        pygame.draw.line(surface, (0, 255, 120), (spx, spy), (ax, ay), 3)
-        lbl_sp = font.render(f"SPAWN ({math.degrees(sp.yaw):.0f}°)", True, (0, 255, 120))
-        surface.blit(lbl_sp, (spx + 12, spy - 10))
+        pygame.draw.line(surface, col_sp, (spx, spy), (ax, ay), 3)
+        lbl_sp = font.render(f"SPAWN ({math.degrees(sp.yaw):.0f}°)", True, col_sp)
+        surface.blit(lbl_sp, (spx + 14, spy - 10))
 
-        # Placement Mode banner
-        if self.is_placing_spawn:
-            hint = font.render(">> CLICK CANVAS TO PLACE SPAWN POINT <<", True, (255, 220, 0))
-            surface.blit(hint, (sc_x - hint.get_width() // 2, screen_rect.top + 20))
+        # 8. Active Tool Banner
+        if self.active_tool:
+            tool_name = self.active_tool.replace('_', ' ').upper()
+            hint = font.render(f">> CLICK CANVAS TO PLACE: {tool_name} (ESC to cancel) <<", True, (255, 220, 0))
+            surface.blit(hint, (sc_x - hint.get_width() // 2, screen_rect.top + 16))
+
+    def _draw_entity_gizmo(
+        self,
+        surface: pygame.Surface,
+        ent: WorldEntity,
+        sc_x: float,
+        sc_y: float,
+        font: pygame.font.Font
+    ) -> None:
+        """Draws individual environment entity icon and collision footprint."""
+        sx, sy = self.world_to_screen(ent.pos.x, ent.pos.y, sc_x, sc_y)
+        is_sel = (ent.entity_id == self.selected_entity_id)
+
+        # Highlight ring if selected
+        if is_sel:
+            pygame.draw.circle(surface, (255, 220, 0), (sx, sy), 18, 2)
+
+        cos_y = math.cos(ent.yaw)
+        sin_y = math.sin(ent.yaw)
+
+        # Entity type specific visuals
+        if isinstance(ent, (StaticObstacle, Barrier)):
+            hl = max(0.2, ent.length * 0.5) * self.zoom
+            hw = max(0.2, ent.width * 0.5) * self.zoom
+            corners = [
+                (sx + cos_y * hl - sin_y * hw, sy - (sin_y * hl + cos_y * hw)),
+                (sx - cos_y * hl - sin_y * hw, sy - (-sin_y * hl + cos_y * hw)),
+                (sx - cos_y * hl + sin_y * hw, sy - (-sin_y * hl - cos_y * hw)),
+                (sx + cos_y * hl + sin_y * hw, sy - (sin_y * hl - cos_y * hw)),
+            ]
+            fill_col = (180, 50, 50) if isinstance(ent, StaticObstacle) else (110, 130, 150)
+            pygame.draw.polygon(surface, fill_col, [(int(x), int(y)) for x, y in corners])
+            pygame.draw.polygon(surface, (255, 255, 255), [(int(x), int(y)) for x, y in corners], 2)
+            lbl = font.render(ent.name, True, (240, 240, 240))
+            surface.blit(lbl, (sx + 10, sy - 8))
+
+        elif isinstance(ent, TrafficCone):
+            r_px = max(4, int(ent.radius * self.zoom))
+            pygame.draw.circle(surface, (255, 120, 0), (sx, sy), r_px)
+            pygame.draw.circle(surface, (255, 255, 255), (sx, sy), max(2, r_px // 2), 1)
+            lbl = font.render("CONE", True, (255, 160, 50))
+            surface.blit(lbl, (sx + 8, sy - 8))
+
+        elif isinstance(ent, TrafficSign):
+            # Diamond / Octagon icon
+            r = 10
+            diamond = [(sx, sy - r), (sx + r, sy), (sx, sy + r), (sx - r, sy)]
+            col = (220, 40, 40) if "stop" in ent.sign_type else (230, 190, 20)
+            pygame.draw.polygon(surface, col, diamond)
+            pygame.draw.polygon(surface, (255, 255, 255), diamond, 2)
+            lbl = font.render(ent.sign_type.upper(), True, (255, 255, 255))
+            surface.blit(lbl, (sx + 12, sy - 8))
+
+        elif isinstance(ent, TrafficLight):
+            # Traffic light box
+            bw, bh = 14, 26
+            pygame.draw.rect(surface, (20, 20, 25), (sx - bw//2, sy - bh//2, bw, bh), border_radius=3)
+            # Active light color
+            l_col = (50, 220, 80) if ent.state == "green" else ((255, 200, 30) if ent.state == "yellow" else (240, 40, 40))
+            pygame.draw.circle(surface, l_col, (sx, sy), 5)
+            lbl = font.render(f"TL ({ent.state.upper()})", True, l_col)
+            surface.blit(lbl, (sx + 12, sy - 8))
+
+        else:
+            pygame.draw.circle(surface, (150, 150, 200), (sx, sy), 8)
+            lbl = font.render(ent.name, True, (200, 200, 220))
+            surface.blit(lbl, (sx + 10, sy - 8))

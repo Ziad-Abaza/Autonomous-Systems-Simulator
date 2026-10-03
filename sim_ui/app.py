@@ -22,10 +22,11 @@ import moderngl
 
 from sim_core.math_utils import Vec2, Vec3
 from sim_core.track.road_definition import RoadDefinition
+from sim_core.world.entity import WorldEntity
 from sim_env.environment import SimulationEnvironment
 from sim_net.server import SimulationServer
 from sim_render.renderer import SimulationRenderer3D
-from sim_render.camera import CameraMode
+from sim_render.camera import CameraMode, SimulationCamera
 from sim_render.offscreen import OffscreenFBO
 from sim_ui.ui_overlay import UIOverlayRenderer
 from sim_ui.hud import SimulationHUD
@@ -101,10 +102,21 @@ class SimulationStudioApp:
         self.renderer = SimulationRenderer3D(self.gl_ctx)
         self.renderer.load_track(self.env.track)
 
+        # Isolated Cameras
+        self.agent_camera = SimulationCamera()
+        self.debug_camera = SimulationCamera()
+
         self.ui_renderer = UIOverlayRenderer(self.gl_ctx, self.width, self.height)
         self.hud = SimulationHUD()
-        self.track_editor = VisualTrackEditor(self.env.road_def)
-        self.inspector = EnvironmentInspector(self.env.road_def, self.env.vehicle.config, self.env.sensors)
+        self.track_editor = VisualTrackEditor(self.env.road_def, self.env.entities)
+        self.inspector = EnvironmentInspector(
+            self.env.road_def,
+            self.env.vehicle.config,
+            self.env.sensors,
+            self.env.reward_engine.config,
+            self.env.observation_schema,
+            self.env.entities
+        )
 
         # Wire Inspector Callbacks
         def do_rebuild():
@@ -112,7 +124,7 @@ class SimulationStudioApp:
             if not self.headless:
                 self.renderer.load_track(self.env.track)
             self.obs, self.step_info = self.env.reset()
-            print("[Studio] Rebuilt 3D track mesh and collision geometry.")
+            print("[Studio] Rebuilt 3D track mesh, broadphase, and collision geometry.")
         self.inspector.on_rebuild_mesh = do_rebuild
 
         def do_save():
@@ -121,6 +133,9 @@ class SimulationStudioApp:
             save_path = os.path.join(save_dir, "custom_environment.sim.json")
             self.project.road_def = self.env.road_def
             self.project.vehicle_config = self.env.vehicle.config
+            self.project.entities = self.env.entities
+            self.project.reward_config = self.env.reward_engine.config
+            self.project.observation_schema = self.env.observation_schema
             self.project.save(save_path)
             print(f"[Studio] Project successfully saved to {save_path}")
         self.inspector.on_save_project = do_save
@@ -132,12 +147,20 @@ class SimulationStudioApp:
                 self.project = proj
                 self.env.road_def = proj.road_def
                 self.env.vehicle.config = proj.vehicle_config
+                self.env.entities = proj.entities
+                self.env.obstacles = [e for e in proj.entities if getattr(e, 'is_collidable', False) or getattr(e, 'entity_type', '') in ('obstacle', 'barrier', 'cone')]
+                self.env.reward_engine.config = proj.reward_config
+                self.env.observation_schema = proj.observation_schema
                 self.env.set_road_definition(proj.road_def)
                 if not self.headless:
                     self.renderer.load_track(self.env.track)
                 self.track_editor.road_def = self.env.road_def
+                self.track_editor.entities = self.env.entities
                 self.inspector.road_def = self.env.road_def
                 self.inspector.vehicle_config = self.env.vehicle.config
+                self.inspector.entities = self.env.entities
+                self.inspector.reward_config = self.env.reward_engine.config
+                self.inspector.observation_schema = self.env.observation_schema
                 self.obs, self.step_info = self.env.reset()
                 print(f"[Studio] Loaded project from {load_path}")
             else:
@@ -147,19 +170,22 @@ class SimulationStudioApp:
         def do_new():
             proj = create_oval_circuit()
             self.project = proj
+            self.env.clear_entities()
             self.env.set_road_definition(proj.road_def)
             if not self.headless:
                 self.renderer.load_track(self.env.track)
             self.track_editor.road_def = self.env.road_def
+            self.track_editor.entities = self.env.entities
             self.inspector.road_def = self.env.road_def
+            self.inspector.entities = self.env.entities
             self.obs, self.step_info = self.env.reset()
             print("[Studio] Created new environment.")
         self.inspector.on_new_project = do_new
 
-        def do_place_spawn():
-            self.track_editor.is_placing_spawn = True
-            print("[Studio] Click canvas to place spawn point.")
-        self.inspector.on_start_place_spawn = do_place_spawn
+        def do_place_tool(tool_type: str):
+            self.track_editor.active_tool = tool_type
+            print(f"[Studio] Tool activated: {tool_type}. Click canvas to place.")
+        self.inspector.on_start_place_tool = do_place_tool
 
         # Hook synthetic camera sensor to offscreen renderer
         cam_sensor = self.env.sensors.get_sensor("rgb_camera")
@@ -172,17 +198,13 @@ class SimulationStudioApp:
         self.clock = pygame.time.Clock()
 
     def _render_offscreen_camera(self, camera_sensor: Any) -> Optional[np.ndarray]:
-        """Renders scene from vehicle's onboard camera into offscreen FBO."""
+        """Renders scene from vehicle's onboard camera into offscreen FBO using isolated agent camera."""
         if not hasattr(self, 'offscreen_fbo') or self.offscreen_fbo is None:
             return None
 
         # Only execute offscreen render pass if camera observations are enabled
         if not self.env.observation_schema.include_camera_rgb:
             return None
-
-        old_cam_pos = self.renderer.camera.pos
-        old_cam_target = self.renderer.camera.target
-        old_aspect = self.renderer.camera.aspect_ratio
 
         try:
             self.offscreen_fbo.bind()
@@ -193,23 +215,25 @@ class SimulationStudioApp:
             cam_y = st.pos.y + sin_y * camera_sensor.local_pos.x + cos_y * camera_sensor.local_pos.y
             cam_z = st.pos.z + camera_sensor.local_pos.z
 
-            self.renderer.camera.pos = Vec3(cam_x, cam_y, cam_z)
-            self.renderer.camera.target = Vec3(cam_x + cos_y * 20.0, cam_y + sin_y * 20.0, cam_z + math.sin(camera_sensor.local_pitch) * 20.0)
-            self.renderer.camera.aspect_ratio = float(camera_sensor.width) / float(camera_sensor.height)
+            self.agent_camera.pos = Vec3(cam_x, cam_y, cam_z)
+            self.agent_camera.target = Vec3(cam_x + cos_y * 20.0, cam_y + sin_y * 20.0, cam_z + math.sin(camera_sensor.local_pitch) * 20.0)
+            self.agent_camera.fov_degrees = camera_sensor.fov_degrees
 
-            # Render 3D scene from vehicle camera
+            # Render 3D scene from vehicle camera with ZERO debug overlays
             self.renderer.render_frame(
                 vehicle=self.env.vehicle,
                 track=self.env.track,
-                obstacles=self.env.obstacles,
+                obstacles=self.env.obstacles + [e for e in self.env.entities if e not in self.env.obstacles],
                 sensors=self.env.sensors,
                 checkpoints=[],
                 current_cp_idx=0,
                 viewport_width=camera_sensor.width,
                 viewport_height=camera_sensor.height,
+                ambient_light=self.env.scenario.ambient_light,
                 show_lidar_rays=False,
                 show_trajectory=False,
-                show_checkpoints=False
+                show_checkpoints=False,
+                camera=self.agent_camera
             )
 
             img = self.offscreen_fbo.read_rgb()
@@ -218,9 +242,6 @@ class SimulationStudioApp:
             # ALWAYS restore main window default framebuffer and viewport!
             self.gl_ctx.screen.use()
             self.gl_ctx.viewport = (0, 0, self.width, self.height)
-            self.renderer.camera.pos = old_cam_pos
-            self.renderer.camera.target = old_cam_target
-            self.renderer.camera.aspect_ratio = old_aspect
 
     def run(self) -> None:
         """Main simulation execution loop."""
@@ -311,8 +332,11 @@ class SimulationStudioApp:
 
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    self.is_running = False
-                    return
+                    if self.active_mode == "mode_editor" and self.track_editor.active_tool:
+                        self.track_editor.active_tool = None
+                    else:
+                        self.is_running = False
+                        return
                 elif event.key == pygame.K_r:
                     # Reset simulation
                     self.obs, self.step_info = self.env.reset()
@@ -366,9 +390,9 @@ class SimulationStudioApp:
 
         # Check Editor interactions if in editor mode
         if self.active_mode == "mode_editor":
-            insp_w = 340
-            insp_h = min(600, self.height - 110)
-            insp_btns = self.inspector.draw(self.ui_renderer.ui_surface, 15, 55, insp_w, insp_h, fonts)
+            insp_w = 350
+            insp_h = min(620, self.height - 100)
+            insp_btns = self.inspector.draw(self.ui_renderer.ui_surface, 15, 50, insp_w, insp_h, fonts)
             for rect, action_id in insp_btns:
                 if rect.collidepoint(mouse_pos):
                     if action_id.startswith("tab_"):
@@ -396,8 +420,23 @@ class SimulationStudioApp:
                         pid = action_id.replace("prop_enum_", "")
                         self.inspector.handle_property_change(pid, None)
                     elif action_id.startswith("prop_act_"):
-                        pid = action_id.replace("prop_act_", "")
-                        self.inspector.handle_property_change(pid, None)
+                        if action_id == "prop_act_sc_add_obstacle":
+                            self.track_editor.active_tool = "obstacle"
+                        elif action_id == "prop_act_sc_add_barrier":
+                            self.track_editor.active_tool = "barrier"
+                        elif action_id == "prop_act_sc_add_cone":
+                            self.track_editor.active_tool = "cone"
+                        elif action_id == "prop_act_sc_add_sign":
+                            self.track_editor.active_tool = "traffic_sign"
+                        elif action_id == "prop_act_sc_add_light":
+                            self.track_editor.active_tool = "traffic_light"
+                        elif action_id.startswith("prop_act_sc_ent_sel_"):
+                            eid = action_id.replace("prop_act_sc_ent_sel_", "")
+                            self.track_editor.select_entity(eid)
+                            self.inspector.select_entity(eid)
+                        else:
+                            pid = action_id.replace("prop_act_", "")
+                            self.inspector.handle_property_change(pid, None)
                     elif action_id == "action_rebuild_mesh":
                         if self.inspector.on_rebuild_mesh:
                             self.inspector.on_rebuild_mesh()
@@ -414,8 +453,11 @@ class SimulationStudioApp:
 
             # Canvas click for control point selection/addition/dragging/spawn
             if mouse_pos[0] > (insp_w + 25):
-                self.track_editor.handle_mouse_down(mouse_pos, button, (self.width * 0.5, self.height * 0.5))
-                self.inspector.select_control_point(self.track_editor.selected_point_idx)
+                handled = self.track_editor.handle_mouse_down(mouse_pos, button, (self.width * 0.5, self.height * 0.5))
+                if self.track_editor.selected_entity_id:
+                    self.inspector.select_entity(self.track_editor.selected_entity_id)
+                elif self.track_editor.selected_point_idx is not None:
+                    self.inspector.select_control_point(self.track_editor.selected_point_idx)
 
         # Check Bottom Bar buttons
         bot_btns = self.hud.draw_bottom_bar(
@@ -429,7 +471,6 @@ class SimulationStudioApp:
                 if action_id == "btn_record":
                     if self.recorder.is_recording:
                         self.recorder.stop_recording(self.step_info.get('termination_reason', 'manual_stop'))
-                        # Auto-save episode to disk
                         ep_path = os.path.join(os.path.dirname(__file__), "..", "last_episode.json")
                         self.recorder.save_to_file(ep_path)
                         print(f"[Studio] Saved episode recording to {ep_path}")
@@ -444,10 +485,11 @@ class SimulationStudioApp:
         self.gl_ctx.viewport = (0, 0, self.width, self.height)
 
         # 1. Render 3D OpenGL viewport
+        all_scene_obs = self.env.obstacles + [e for e in self.env.entities if e not in self.env.obstacles]
         self.renderer.render_frame(
             vehicle=self.env.vehicle,
             track=self.env.track,
-            obstacles=self.env.obstacles,
+            obstacles=all_scene_obs,
             sensors=self.env.sensors,
             checkpoints=self.env.track.checkpoints,
             current_cp_idx=self.env.checkpoint_tracker.current_index,
@@ -507,9 +549,21 @@ class SimulationStudioApp:
             )
 
             # Unified Environment Inspector
-            insp_w = 340
-            insp_h = min(600, self.height - 110)
-            self.inspector.draw(surf, 15, 55, insp_w, insp_h, fonts)
+            insp_w = 350
+            insp_h = min(620, self.height - 100)
+            self.inspector.draw(surf, 15, 50, insp_w, insp_h, fonts)
+
+        # Observation inspector modal overlay (press TAB to toggle)
+        if self.hud.show_obs_inspector:
+            self.hud.draw_observation_inspector(
+                surf,
+                (self.width - 620) // 2,
+                (self.height - 360) // 2,
+                self.obs,
+                self.env.observation_schema,
+                self.step_info,
+                fonts
+            )
 
         # Bottom Bar
         self.hud.draw_bottom_bar(

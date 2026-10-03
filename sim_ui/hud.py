@@ -378,3 +378,98 @@ class SimulationHUD:
         fill_w = int(max(0.0, min(1.0, value)) * w)
         if fill_w > 0:
             pygame.draw.rect(surface, color, (x, y, fill_w, h), border_radius=2)
+
+    def draw_observation_inspector(
+        self,
+        surface: pygame.Surface,
+        x: int,
+        y: int,
+        obs: Any,
+        schema: Any,
+        info: Dict[str, Any],
+        fonts: Dict[str, pygame.font.Font]
+    ) -> None:
+        """
+        Renders detailed Observation Inspector overlay explicitly separating
+        Agent Observation (AI perception) from Privileged Oracle Telemetry.
+        """
+        w, h = 620, 360
+        pygame.draw.rect(surface, (14, 18, 26, 240), (x, y, w, h), border_radius=8)
+        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h), 1, border_radius=8)
+
+        f_bold = fonts['bold']
+        f_small = fonts['small']
+        f_mono = fonts['mono']
+
+        # Title
+        surface.blit(f_bold.render("OBSERVATION & TELEMETRY INSPECTOR (TAB to close)", True, (0, 210, 255)), (x + 15, y + 10))
+        pygame.draw.line(surface, (45, 55, 75), (x + 10, y + 34), (x + w - 10, y + 34), 1)
+
+        col_w = (w - 30) // 2
+
+        # --- LEFT: AGENT OBSERVATION ---
+        lx = x + 15
+        surface.blit(f_bold.render("[AI OBSERVATION (Policy Input)]", True, (80, 220, 120)), (lx, y + 42))
+
+        # Check observation format
+        if isinstance(obs, np.ndarray):
+            dim = obs.shape[0] if obs.ndim > 0 else 1
+            surface.blit(f_small.render(f"Type: Box({dim},)  |  Dtype: {obs.dtype}", True, (160, 175, 190)), (lx, y + 64))
+
+            # Display first 10-12 feature values
+            row_y = y + 88
+            feature_names = []
+            if getattr(schema, 'include_speed', True): feature_names.append("speed_norm")
+            if getattr(schema, 'include_velocity', True): feature_names.extend(["vel_x", "vel_y"])
+            if getattr(schema, 'include_yaw_rate', True): feature_names.append("yaw_rate")
+            if getattr(schema, 'include_steering_angle', True): feature_names.append("steering")
+            if getattr(schema, 'include_distance_from_center', True): feature_names.append("lat_offset")
+            if getattr(schema, 'include_heading_error', True): feature_names.append("heading_err")
+            if getattr(schema, 'include_distance_to_checkpoint', True): feature_names.append("dist_cp")
+            if getattr(schema, 'include_lidar_rays', True):
+                for k in range(min(7, dim - len(feature_names))):
+                    feature_names.append(f"lidar_{k}")
+
+            for idx in range(min(10, len(feature_names), len(obs))):
+                val = float(obs[idx])
+                name = feature_names[idx] if idx < len(feature_names) else f"feat_{idx}"
+                surface.blit(f_small.render(name, True, (170, 185, 200)), (lx, row_y))
+                surface.blit(f_mono.render(f"{val:+6.3f}", True, (255, 255, 255)), (lx + 130, row_y))
+                row_y += 22
+
+            if dim > 10:
+                surface.blit(f_small.render(f"... + {dim - 10} more features (LiDAR / image)", True, (130, 140, 155)), (lx, row_y + 4))
+
+        elif isinstance(obs, dict):
+            surface.blit(f_small.render("Type: Dict Observation", True, (160, 175, 190)), (lx, y + 64))
+            row_y = y + 88
+            for k, v in list(obs.items())[:8]:
+                val_str = f"array{v.shape}" if isinstance(v, np.ndarray) else f"{v}"
+                surface.blit(f_small.render(k, True, (170, 185, 200)), (lx, row_y))
+                surface.blit(f_mono.render(val_str, True, (255, 255, 255)), (lx + 130, row_y))
+                row_y += 22
+
+        # --- RIGHT: ORACLE TELEMETRY (Privileged Ground Truth) ---
+        rx = x + col_w + 15
+        surface.blit(f_bold.render("[ORACLE / DEBUG TELEMETRY]", True, (255, 180, 50)), (rx, y + 42))
+        surface.blit(f_small.render("Privileged state (NEVER sent to AI)", True, (220, 120, 80)), (rx, y + 64))
+
+        oracle_rows = [
+            ("Speed (Exact)", f"{info.get('speed', 0.0):.2f} m/s"),
+            ("Heading Error", f"{math.degrees(info.get('heading_error', 0.0)):+.1f}°"),
+            ("Lateral Offset", f"{info.get('lateral_offset', 0.0):+.2f} m"),
+            ("Road Width", f"{info.get('road_width', 12.0):.1f} m"),
+            ("On Road", "YES" if info.get('is_on_road', True) else "OFF ROAD"),
+            ("Is Colliding", "COLLISION" if info.get('is_colliding', False) else "CLEAR"),
+            ("Checkpoints", f"{info.get('checkpoints_passed', 0)} (CP {info.get('current_checkpoint', 0)})"),
+            ("Laps Done", f"{info.get('laps_completed', 0)}"),
+            ("Sim Time", f"{info.get('sim_time', 0.0):.2f} s"),
+            ("Total Reward", f"{info.get('total_reward', 0.0):+.2f}"),
+        ]
+
+        row_y = y + 88
+        for label, val_str in oracle_rows:
+            surface.blit(f_small.render(label, True, (170, 185, 200)), (rx, row_y))
+            surface.blit(f_mono.render(val_str, True, (255, 230, 80)), (rx + 135, row_y))
+            row_y += 22
+

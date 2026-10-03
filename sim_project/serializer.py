@@ -1,26 +1,32 @@
 """
 Project serialization and persistence engine for environments, vehicle configs,
-reward parameters, and scenarios into versioned *.sim.json files.
+reward parameters, world entities, sensor suites, and scenarios into versioned *.sim.json files.
+Supports Schema 2.0.0 with automatic backward migration for Schema 1.0.0 files.
 """
 
 from __future__ import annotations
 import json
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sim_core.track.road_definition import RoadDefinition
 from sim_core.vehicle.vehicle_config import VehicleConfig
+from sim_core.world.entity import WorldEntity, StaticObstacle, entity_from_dict
+from sim_core.world.obstacle import Obstacle
 from sim_env.spaces import ActionSpaceConfig, ObservationSchema
 from sim_env.reward_engine import RewardConfig
 from sim_env.termination_engine import TerminationConfig
 from sim_env.domain_randomizer import DomainRandomizationConfig
 from sim_env.scenarios import ScenarioConfig
+SCHEMA_VERSION = "2.0.0"
 
 
 class EnvironmentProject:
     """
     Serializable container representing a complete versioned AI environment.
+    Schema 2.0.0 adds first-class World Entities, rich reward configurations,
+    and modular sensor definitions.
     """
-    SCHEMA_VERSION = "1.0.0"
+    SCHEMA_VERSION = "2.0.0"
 
     def __init__(
         self,
@@ -32,7 +38,8 @@ class EnvironmentProject:
         reward_config: Optional[RewardConfig] = None,
         termination_config: Optional[TerminationConfig] = None,
         randomization_config: Optional[DomainRandomizationConfig] = None,
-        scenario_config: Optional[ScenarioConfig] = None
+        scenario_config: Optional[ScenarioConfig] = None,
+        entities: Optional[List[WorldEntity]] = None
     ):
         self.name = name
         self.road_def = road_def or RoadDefinition.create_default_oval()
@@ -43,6 +50,13 @@ class EnvironmentProject:
         self.termination_config = termination_config or TerminationConfig()
         self.randomization_config = randomization_config or DomainRandomizationConfig()
         self.scenario_config = scenario_config or ScenarioConfig()
+        self.entities: List[WorldEntity] = entities if entities is not None else []
+        self.schema_version: str = self.SCHEMA_VERSION
+
+    @property
+    def obstacles(self) -> List[Any]:
+        """Backward-compatibility accessor returning all obstacle entities."""
+        return [e for e in self.entities if getattr(e, 'entity_type', None) in ('obstacle', 'static_obstacle') or isinstance(e, StaticObstacle)]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -56,11 +70,12 @@ class EnvironmentProject:
             'termination_config': self.termination_config.to_dict(),
             'randomization_config': self.randomization_config.to_dict(),
             'scenario_config': self.scenario_config.to_dict(),
+            'entities': [e.to_dict() for e in self.entities],
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> EnvironmentProject:
-        version = data.get('schema_version', '1.0.0')
+        version = str(data.get('schema_version', '1.0.0'))
         road_def = RoadDefinition.from_dict(data.get('road_definition', {}))
         vehicle_cfg = VehicleConfig.from_dict(data.get('vehicle_config', {}))
         action_cfg = ActionSpaceConfig.from_dict(data.get('action_config', {}))
@@ -69,6 +84,29 @@ class EnvironmentProject:
         term_cfg = TerminationConfig.from_dict(data.get('termination_config', {}))
         rand_cfg = DomainRandomizationConfig.from_dict(data.get('randomization_config', {}))
         scen_cfg = ScenarioConfig.from_dict(data.get('scenario_config', {}))
+
+        # Entity deserialization with Schema 1.0.0 migration
+        entities: List[WorldEntity] = []
+        if 'entities' in data and data['entities']:
+            for edata in data['entities']:
+                try:
+                    entities.append(entity_from_dict(edata))
+                except Exception:
+                    # Fallback generic obstacle
+                    entities.append(StaticObstacle.from_dict(edata))
+        elif 'obstacles' in data and data['obstacles']:
+            for obs_data in data['obstacles']:
+                try:
+                    entities.append(Obstacle.from_dict(obs_data))
+                except Exception:
+                    pass
+        elif scen_cfg.obstacles:
+            # Backward migration: convert legacy scenario obstacles into WorldEntity
+            for obs_data in scen_cfg.obstacles:
+                try:
+                    entities.append(Obstacle.from_dict(obs_data))
+                except Exception:
+                    pass
 
         return cls(
             name=str(data.get('name', 'Untitled Environment')),
@@ -79,7 +117,8 @@ class EnvironmentProject:
             reward_config=reward_cfg,
             termination_config=term_cfg,
             randomization_config=rand_cfg,
-            scenario_config=scen_cfg
+            scenario_config=scen_cfg,
+            entities=entities
         )
 
     def save(self, filepath: str) -> None:

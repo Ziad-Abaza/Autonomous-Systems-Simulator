@@ -160,16 +160,19 @@ class SimulationRenderer3D:
         ambient_light: float = 1.0,
         show_lidar_rays: bool = True,
         show_trajectory: bool = True,
-        show_checkpoints: bool = True
+        show_checkpoints: bool = True,
+        camera: Optional[SimulationCamera] = None
     ) -> None:
         """Renders complete 3D viewport."""
         self.ctx.viewport = (0, 0, viewport_width, viewport_height)
         self.ctx.clear(0.53, 0.81, 0.92, 1.0)  # Sky blue
 
-        self.camera.set_aspect_ratio(viewport_width, viewport_height)
-        view = self.camera.get_view_matrix()
-        proj = self.camera.get_projection_matrix()
+        active_cam = camera or self.camera
+        active_cam.set_aspect_ratio(viewport_width, viewport_height)
+        view = active_cam.get_view_matrix()
+        proj = active_cam.get_projection_matrix()
         vp = proj @ view
+
 
         light_dir = (-0.4, 0.5, 0.8)
 

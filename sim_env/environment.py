@@ -22,6 +22,7 @@ from sim_core.sensors.camera_sensor import CameraSensor
 from sim_core.sensors.raycast_sensor import RaycastSensor
 from sim_core.world.checkpoint import CheckpointTracker
 from sim_core.world.obstacle import Obstacle
+from sim_core.world.entity import WorldEntity
 
 from sim_env.spaces import ActionSpaceConfig, ObservationSchema, ActionSpaceType
 from sim_env.reward_engine import RewardEngine, RewardConfig
@@ -62,7 +63,8 @@ class SimulationEnvironment:
         self.vehicle = VehicleModel(self.base_vehicle_config)
 
         # World Entities & Obstacles
-        self.obstacles: List[Obstacle] = []
+        self.entities: List[WorldEntity] = []
+        self.obstacles: List[Any] = []
         self.checkpoint_tracker = CheckpointTracker(self.track)
 
         # Sensors
@@ -90,12 +92,48 @@ class SimulationEnvironment:
         self.track = TrackMeshGenerator.generate(self.road_def)
         self.track_queries = TrackSpatialQueries(self.track)
         self.checkpoint_tracker = CheckpointTracker(self.track)
+        # Re-register entities into new broadphase
+        if self.track.broadphase:
+            for ent in self.entities:
+                self.track.broadphase.insert_entity(ent)
 
-    def add_obstacle(self, obstacle: Obstacle) -> None:
-        self.obstacles.append(obstacle)
+    def add_obstacle(self, obstacle: Any) -> None:
+        """Adds an obstacle entity (backward-compatible)."""
+        if obstacle not in self.obstacles:
+            self.obstacles.append(obstacle)
+        if obstacle not in self.entities:
+            self.entities.append(obstacle)
+        if self.track.broadphase:
+            self.track.broadphase.insert_entity(obstacle)
+
+    def add_entity(self, entity: WorldEntity) -> None:
+        """Adds a WorldEntity to the environment."""
+        if entity not in self.entities:
+            self.entities.append(entity)
+        if getattr(entity, 'is_collidable', False) and entity not in self.obstacles:
+            self.obstacles.append(entity)
+        if self.track.broadphase:
+            self.track.broadphase.insert_entity(entity)
+
+    def remove_entity(self, entity_id: str) -> bool:
+        """Removes entity by its entity_id."""
+        to_remove = [e for e in self.entities if getattr(e, 'entity_id', '') == entity_id]
+        if to_remove:
+            for ent in to_remove:
+                self.entities.remove(ent)
+                if ent in self.obstacles:
+                    self.obstacles.remove(ent)
+            return True
+        return False
 
     def clear_obstacles(self) -> None:
         self.obstacles.clear()
+        self.entities = [e for e in self.entities if getattr(e, 'entity_type', '') != 'obstacle']
+
+    def clear_entities(self) -> None:
+        self.entities.clear()
+        self.obstacles.clear()
+
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[Union[np.ndarray, Dict[str, Any]], Dict[str, Any]]:
         """
@@ -193,18 +231,23 @@ class SimulationEnvironment:
         )
         curr_pos_2d = Vec2(self.vehicle.state.pos.x, self.vehicle.state.pos.y)
 
-        # 3. Collision Checks
-        # Boundary collision
+        # Update dynamic entities (e.g. traffic light timers)
+        for ent in self.entities:
+            ent.update(dt)
+
+        # 3. Collision Checks (accelerated by spatial hash broadphase)
         bound_col = VehicleCollisionChecker.check_track_boundary_collision(
             self.vehicle,
-            self.track.all_boundary_segments
+            self.track.all_boundary_segments,
+            broadphase=self.track.broadphase
         )
-        # Obstacle collision
         obs_col = VehicleCollisionChecker.check_obstacle_collision(
             self.vehicle,
-            self.obstacles
+            self.obstacles,
+            broadphase=self.track.broadphase
         )
         is_colliding = bound_col.collided or obs_col.collided
+
 
         # 4. Track Spatial Relationship
         track_info = self.track_queries.query_vehicle_pose(curr_pos_2d, self.vehicle.state.yaw)

@@ -38,6 +38,35 @@ class RewardConfig:
                 setattr(cfg, k, float(v))
         return cfg
 
+    def validate(self) -> bool:
+        """
+        Validates reward parameters to prevent silent contract breaks.
+        Returns True if valid, raises ValueError with explanation otherwise.
+        """
+        if self.weight_progress < 0.0:
+            raise ValueError(f"weight_progress cannot be negative: {self.weight_progress}")
+        if self.weight_centering < 0.0:
+            raise ValueError(f"weight_centering cannot be negative: {self.weight_centering}")
+        if self.weight_speed < 0.0:
+            raise ValueError(f"weight_speed cannot be negative: {self.weight_speed}")
+        if self.target_speed <= 0.0:
+            raise ValueError(f"target_speed must be positive: {self.target_speed}")
+        if self.weight_heading < 0.0:
+            raise ValueError(f"weight_heading cannot be negative: {self.weight_heading}")
+        if self.weight_action_smoothness < 0.0:
+            raise ValueError(f"weight_action_smoothness cannot be negative: {self.weight_action_smoothness}")
+        if self.checkpoint_bonus < 0.0:
+            raise ValueError(f"checkpoint_bonus cannot be negative: {self.checkpoint_bonus}")
+        if self.lap_completion_bonus < 0.0:
+            raise ValueError(f"lap_completion_bonus cannot be negative: {self.lap_completion_bonus}")
+        if self.collision_penalty < 0.0:
+            raise ValueError(f"collision_penalty cannot be negative: {self.collision_penalty}")
+        if self.off_road_penalty < 0.0:
+            raise ValueError(f"off_road_penalty cannot be negative: {self.off_road_penalty}")
+        if self.backward_penalty < 0.0:
+            raise ValueError(f"backward_penalty cannot be negative: {self.backward_penalty}")
+        return True
+
 
 class RewardEngine:
     """

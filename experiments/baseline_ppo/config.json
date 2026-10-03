@@ -1,0 +1,22 @@
+{
+  "algorithm": "PPO",
+  "software_version": "Phase 2 (v2.0.0)",
+  "framework": "PyTorch 2.10.0+cpu",
+  "seed": 42,
+  "total_timesteps": 50000,
+  "num_steps_per_rollout": 1024,
+  "num_epochs": 4,
+  "batch_size": 256,
+  "learning_rate": 0.0003,
+  "gamma": 0.99,
+  "gae_lambda": 0.95,
+  "clip_coef": 0.2,
+  "ent_coef": 0.01,
+  "vf_coef": 0.5,
+  "max_grad_norm": 0.5,
+  "observation_dim": 23,
+  "action_dim": 3,
+  "track": "Proving Ground Oval (60m x 35m, 12m width)",
+  "target_speed": 20.0,
+  "hardware": "AMD Ryzen / Radeon CPU-bound execution"
+}

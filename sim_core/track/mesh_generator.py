@@ -10,6 +10,8 @@ import numpy as np
 from sim_core.math_utils import Vec2, Vec3
 from sim_core.track.spline import TrackSpline, SplinePoint
 from sim_core.track.road_definition import RoadDefinition, RoadBoundaryConfig
+from sim_core.collision.spatial_hash import SpatialHashGrid2D
+
 
 
 class GeneratedTrack:
@@ -45,6 +47,10 @@ class GeneratedTrack:
         # Track bounds
         self.min_bounds = Vec3(0, 0, 0)
         self.max_bounds = Vec3(0, 0, 0)
+
+        # Spatial Hash Broadphase
+        self.broadphase: Optional[SpatialHashGrid2D] = None
+
 
 
 class TrackMeshGenerator:
@@ -269,5 +275,9 @@ class TrackMeshGenerator:
             all_pts = np.array(road_pos)
             track.min_bounds = Vec3(float(np.min(all_pts[:, 0])), float(np.min(all_pts[:, 1])), float(np.min(all_pts[:, 2])))
             track.max_bounds = Vec3(float(np.max(all_pts[:, 0])), float(np.max(all_pts[:, 1])), float(np.max(all_pts[:, 2])))
+
+        # Build 2D spatial acceleration broadphase
+        track.broadphase = SpatialHashGrid2D(cell_size=12.0)
+        track.broadphase.build_from_segments(track.all_boundary_segments)
 
         return track
