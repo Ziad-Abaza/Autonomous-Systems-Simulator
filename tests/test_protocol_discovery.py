@@ -32,12 +32,15 @@ def test_contract_discovery_protocol():
 
     try:
         client = SimulationClient(host="127.0.0.1", port=9877)
-        # Connect & discover
+        # Connect & discover — negotiated version is the max mutual
+        # (2.1 since SET_SCENARIO landed; assert the contract field, not
+        # a hardcoded literal).
+        from sim_net.protocol import PROTOCOL_VERSION
         spec = client.connect()
-        assert spec.get("protocol_version") == "2.0"
+        assert spec.get("protocol_version") == PROTOCOL_VERSION
 
         contract = client.discover_contract()
-        assert contract.get("protocol_version") == "2.0"
+        assert contract.get("protocol_version") == PROTOCOL_VERSION
         assert contract["physics_hz"] == 60.0
         assert "action_schema" in contract
         assert "observation_schema" in contract

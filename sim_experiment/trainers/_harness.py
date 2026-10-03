@@ -368,6 +368,41 @@ class EpisodeTrajectoryRecorder:
             self.env_episode_idx[env_idx] += 1
             self.env_step_idx[env_idx] = 0
 
+    def finalize(self) -> None:
+        """
+        Flushes any in-progress (never-terminated) episode buffers as
+        partial trajectory files — short runs still yield their captured
+        steps. Call right before the TrajectoryWriter is closed.
+        """
+        if self.traj is None:
+            return
+        for env_idx, steps in enumerate(self._buffers):
+            if not steps:
+                continue
+            ep_idx = self.env_episode_idx[env_idx]
+            if not self._episode_selected(env_idx, ep_idx, steps):
+                continue
+            ep_id = f"train_env{env_idx}_ep{ep_idx}"
+            self.traj.start_episode(
+                ep_id,
+                env_fingerprint=self.contract["environment_fingerprint"],
+                scenario_id=self.contract["scenario_id"],
+                seed=self.seed,
+                observation_schema=self.contract.get("observation_schema"),
+                action_schema=self.contract.get("action_schema"),
+                episode_seed=self._ep_seeds[env_idx],
+                curriculum_stage_index=(
+                    self.stage_fn() if self.stage_fn else None),
+                env_index=env_idx,
+            )
+            for s in steps:
+                self.traj.record_step(
+                    step=s["step"],
+                    agent_data=s["agent_data"],
+                    diagnostic_data=s["diagnostic_data"])
+            self.traj.close_episode()
+            self.episodes_done += 1
+
 
 # ----------------------------------------------------------------- evaluation
 

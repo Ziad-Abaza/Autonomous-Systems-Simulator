@@ -232,6 +232,7 @@ def run_training(run_dir: str) -> int:
         "sps": metrics.get("sps", 0.0),
     })
     writer.close()
+    recorder.finalize()
     if traj is not None:
         traj.close()
     if curriculum is not None:

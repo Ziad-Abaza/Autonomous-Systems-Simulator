@@ -48,6 +48,20 @@ Flat `include_*` boolean schema vs. the `ObservationSpaceDefinition` channel mod
 - `agent.py::AgentDefinition` default `sensor_names` fallback — retained as a factory default, no longer treated as authoritative (validator fix).
 - No unreferenced modules found; `sim_net` remains the transport layer used by `SimGymEnv`, headless pools, and remote workers reuse the pattern.
 
+## 6. Phase 6 update — `sim_client/train.py` (ppo_train demo path)
+
+**Drift found:** the Phase-2 demo driver `sim_client/train.py` (referred to
+in earlier docs as `ppo_train.py`) still hard-codes the legacy env
+construction and bypasses the experiment contract entirely — no manifest,
+no fingerprint, no metrics schema, no run record. It predates the
+VectorEnv backends added in Phase 6.
+
+**Decision: formally deprecated** (kept runnable for the interactive demo).
+The supported training entry points are `sim_experiment.cli launch` and the
+orchestrator contract. The deprecation map lives in
+`docs/LEGACY_MIGRATION.md`; `train.py` remains untouched functionally but
+should not be extended — new work goes through the contract path.
+
 ## Summary Table
 
 | Path | Status | Migration? |
@@ -55,6 +69,7 @@ Flat `include_*` boolean schema vs. the `ObservationSpaceDefinition` channel mod
 | Legacy env runtime (no agent) | Retained | None — tests + legacy projects depend on it |
 | `ObservationSchema` (spaces.py) | Retained (wire/compat) | None — additive field in Phase-3 files |
 | `*.sim.json` format | Retained | None — format is forward-compatible |
-| `sim_client` baselines | Retained (role: algorithm runners) | None |
+| `sim_client` baselines | Retained (role: algorithm runners) | Runners now vector-env native (Phase 6) |
+| `sim_client/train.py` demo | **Deprecated** | Use `sim_experiment.cli` — see LEGACY_MIGRATION.md |
 | Validator sensor fallback | **Fixed** | Sensors now derived from `agent.sensor_names` |
 | `get_state` contract | **Fixed** | Payload now contract-driven (diagnostic classification) |

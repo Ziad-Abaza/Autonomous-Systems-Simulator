@@ -1,0 +1,117 @@
+{
+  "benchmarked_at": "2026-10-03 13:16:14",
+  "steps_per_env": 300,
+  "results": [
+    {
+      "mode": "inprocess",
+      "num_envs": 1,
+      "steps": 300,
+      "elapsed_s": 0.764,
+      "steps_per_sec": 392.5,
+      "per_env_sps": 392.5
+    },
+    {
+      "mode": "inprocess",
+      "num_envs": 2,
+      "steps": 600,
+      "elapsed_s": 1.551,
+      "steps_per_sec": 386.9,
+      "per_env_sps": 193.5
+    },
+    {
+      "mode": "inprocess",
+      "num_envs": 4,
+      "steps": 1200,
+      "elapsed_s": 3.271,
+      "steps_per_sec": 366.8,
+      "per_env_sps": 91.7
+    },
+    {
+      "mode": "process",
+      "num_envs": 1,
+      "steps": 300,
+      "setup_s": 0.85,
+      "elapsed_s": 0.83,
+      "steps_per_sec": 361.3,
+      "per_env_sps": 361.3
+    },
+    {
+      "mode": "process",
+      "num_envs": 2,
+      "steps": 600,
+      "setup_s": 2.05,
+      "elapsed_s": 0.954,
+      "steps_per_sec": 629.2,
+      "per_env_sps": 314.6
+    },
+    {
+      "mode": "process",
+      "num_envs": 4,
+      "steps": 1200,
+      "setup_s": 3.17,
+      "elapsed_s": 1.135,
+      "steps_per_sec": 1056.9,
+      "per_env_sps": 264.2
+    },
+    {
+      "mode": "tcp",
+      "num_envs": 1,
+      "steps": 300,
+      "setup_s": 2.68,
+      "procs": 0,
+      "elapsed_s": 2.397,
+      "steps_per_sec": 125.2,
+      "per_env_sps": 125.2
+    },
+    {
+      "mode": "tcp",
+      "num_envs": 2,
+      "steps": 600,
+      "setup_s": 1.88,
+      "procs": 0,
+      "elapsed_s": 3.329,
+      "steps_per_sec": 180.2,
+      "per_env_sps": 90.1
+    },
+    {
+      "mode": "tcp",
+      "num_envs": 4,
+      "steps": 1200,
+      "setup_s": 3.62,
+      "procs": 0,
+      "elapsed_s": 6.671,
+      "steps_per_sec": 179.9,
+      "per_env_sps": 45.0
+    },
+    {
+      "mode": "tcp_multi",
+      "num_envs": 1,
+      "steps": 300,
+      "setup_s": 2.23,
+      "procs": 0,
+      "elapsed_s": 2.416,
+      "steps_per_sec": 124.2,
+      "per_env_sps": 124.2
+    },
+    {
+      "mode": "tcp_multi",
+      "num_envs": 2,
+      "steps": 600,
+      "setup_s": 1.41,
+      "procs": 0,
+      "elapsed_s": 1.845,
+      "steps_per_sec": 325.2,
+      "per_env_sps": 162.6
+    },
+    {
+      "mode": "tcp_multi",
+      "num_envs": 4,
+      "steps": 1200,
+      "setup_s": 2.19,
+      "procs": 0,
+      "elapsed_s": 3.805,
+      "steps_per_sec": 315.4,
+      "per_env_sps": 78.8
+    }
+  ]
+}

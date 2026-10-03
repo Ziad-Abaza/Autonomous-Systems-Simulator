@@ -214,6 +214,7 @@ def run_training(run_dir: str) -> int:
     })
 
     writer.close()
+    recorder.finalize()
     if traj is not None:
         traj.close()
     if curriculum is not None:
