@@ -20,7 +20,7 @@ import os
 import time
 from typing import Dict, Any, List, Optional, Iterator
 
-SCOPES = ("step", "episode", "evaluation", "run")
+SCOPES = ("step", "episode", "evaluation", "curriculum", "run")
 
 
 def _sanitize(value: Any) -> Any:

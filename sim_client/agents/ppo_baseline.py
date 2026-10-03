@@ -151,6 +151,14 @@ class PPORunner:
         self.dones_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
         self.values_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
 
+        # Env-swap / deterministic reset bookkeeping. _envs_dirty forces a
+        # fresh re-initialization (reset with derived seeds) at the start of
+        # the next update; _env_epoch bumps on every set_envs() swap so seed
+        # streams never repeat across curriculum stages.
+        self._envs_dirty = True
+        self._env_epoch = 0
+        self._reset_counts = [0] * len(self.envs)
+
         # Resume from a previous checkpoint if requested
         if resume_checkpoint:
             self.load_checkpoint(resume_checkpoint)
@@ -175,6 +183,30 @@ class PPORunner:
             'wall_clock_time': 0.0
         }
 
+    def set_envs(self, envs) -> None:
+        """
+        Atomically swaps the environment list (e.g. curriculum stage change).
+        The rollout state is re-initialized at the start of the next update;
+        env count must stay constant because rollout buffers are fixed-size.
+        """
+        new_envs = list(envs) if isinstance(envs, (list, tuple)) else [envs]
+        if len(new_envs) != len(self.envs):
+            raise ValueError(
+                f"set_envs requires exactly {len(self.envs)} envs, got {len(new_envs)}"
+            )
+        self.envs = new_envs
+        self.env = new_envs[0]
+        self._env_epoch += 1
+        self._reset_counts = [0] * len(new_envs)
+        self._envs_dirty = True
+
+    def _next_reset_seed(self, env_idx: int) -> int:
+        """Deterministic per-(epoch, env, reset) seed — distinct every reset."""
+        seed = (self.seed + self._env_epoch * 1_000_003
+                + env_idx * 79_919 + self._reset_counts[env_idx])
+        self._reset_counts[env_idx] += 1
+        return int(seed)
+
     def train(self, total_timesteps: int = 50000, log_interval: int = 2048) -> Dict[str, Any]:
         """Runs the PPO training loop for total_timesteps."""
         start_time = time.perf_counter()
@@ -186,17 +218,13 @@ class PPORunner:
                 o = o.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
             return o
 
-        # Per-env rollout state
+        # Per-env rollout state (initialized lazily via the _envs_dirty flag
+        # so set_envs() mid-training triggers a clean re-reset).
         next_obs_tensors, next_done_tensors = [], []
         ep_return = [0.0] * num_envs
         ep_len = [0] * num_envs
         ep_lat_errors: List[List[float]] = [[] for _ in range(num_envs)]
         ep_speeds: List[List[float]] = [[] for _ in range(num_envs)]
-
-        for e, env in enumerate(self.envs):
-            o, _ = env.reset(seed=self.seed + e)
-            next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
-            next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
 
         num_updates = max(1, total_timesteps // self.num_steps)
         global_step = self.global_step_offset
@@ -207,6 +235,18 @@ class PPORunner:
         print("=" * 75)
 
         for update in range(1, num_updates + 1):
+            if self._envs_dirty:
+                self._envs_dirty = False
+                next_obs_tensors, next_done_tensors = [], []
+                ep_return = [0.0] * num_envs
+                ep_len = [0] * num_envs
+                ep_lat_errors = [[] for _ in range(num_envs)]
+                ep_speeds = [[] for _ in range(num_envs)]
+                for e, env in enumerate(self.envs):
+                    o, _ = env.reset(seed=self._next_reset_seed(e))
+                    next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
+                    next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
+
             new_episodes: List[Dict[str, Any]] = []
 
             # 1. Rollout Collection — contiguous segment per environment
@@ -286,7 +326,7 @@ class PPORunner:
                     ep_len[env_idx] = 0
                     ep_lat_errors[env_idx] = []
                     ep_speeds[env_idx] = []
-                    reset_obs, _ = env.reset()
+                    reset_obs, _ = env.reset(seed=self._next_reset_seed(env_idx))
                     next_obs_tensors[env_idx] = torch.tensor(_to_vec(reset_obs), dtype=torch.float32, device=self.device)
 
             # 2. Generalized Advantage Estimation (per contiguous env segment)
@@ -426,10 +466,14 @@ class PPORunner:
 
         return self.metrics
 
-    def save_checkpoint(self, path: str, step: Optional[int] = None) -> None:
-        """Saves model weights and optimizer state to disk."""
+    def save_checkpoint(self, path: str, step: Optional[int] = None, extra: Optional[Dict[str, Any]] = None) -> None:
+        """Saves model weights and optimizer state to disk.
+
+        `extra` merges caller-owned metadata (e.g. curriculum_state) into the
+        checkpoint payload at top level so it survives resume.
+        """
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        torch.save({
+        payload = {
             'model_state_dict': self.agent.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'obs_dim': self.obs_dim,
@@ -437,13 +481,20 @@ class PPORunner:
             'seed': self.seed,
             'metrics': self.metrics,
             'timestep': int(step if step is not None else self.metrics.get('total_timesteps', 0)),
-        }, path)
+        }
+        payload.update(dict(extra or {}))
+        torch.save(payload, path)
         print(f"[PPO Runner] Checkpoint saved to {path}")
 
-    def load_checkpoint(self, path: str) -> None:
-        """Restores model/optimizer state; subsequent timesteps continue the count."""
+    def load_checkpoint(self, path: str) -> Dict[str, Any]:
+        """Restores model/optimizer state; subsequent timesteps continue the count.
+
+        Returns the raw checkpoint payload so callers can read extension
+        fields (e.g. curriculum_state) without a second torch.load.
+        """
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.agent.load_state_dict(ckpt['model_state_dict'])
         self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
         self.global_step_offset = int(ckpt.get('timestep') or ckpt.get('metrics', {}).get('total_timesteps', 0))
         print(f"[PPO Runner] Resumed from checkpoint {path} (timestep offset {self.global_step_offset})")
+        return ckpt

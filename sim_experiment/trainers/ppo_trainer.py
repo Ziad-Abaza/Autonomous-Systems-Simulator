@@ -33,6 +33,10 @@ from sim_experiment.trajectory import TrajectoryWriter
 from sim_experiment.trainer_contract import validate_contract
 from sim_experiment.evaluation import evaluate_policy
 from sim_experiment.headless import build_env_from_dicts
+from sim_experiment.curriculum_runtime import (
+    CurriculumController, validate_curriculum,
+)
+from sim_env.curriculum import CurriculumDefinition
 
 
 def _write_result(run_dir: str, status: str, **kwargs) -> None:
@@ -43,11 +47,20 @@ def _write_result(run_dir: str, status: str, **kwargs) -> None:
     os.replace(tmp, path)
 
 
-def _build_envs(contract: Dict[str, Any]) -> List[Any]:
-    """Builds num_envs independent environments per contract env_mode."""
+def _build_envs(
+    contract: Dict[str, Any],
+    scenario_dict: Optional[Dict[str, Any]] = None,
+    seed_fn=None,
+) -> List[Any]:
+    """
+    Builds num_envs independent environments per contract env_mode.
+    `scenario_dict` overrides the contract scenario (curriculum stages);
+    `seed_fn(env_index)` overrides the default seed+i derivation.
+    """
     training = contract["training"]
     num_envs = max(1, int(training.get("num_envs", 1)))
     seed = int(contract["seed"])
+    seed_fn = seed_fn or (lambda i: seed + i)
 
     if contract["env_mode"] == "tcp":
         from sim_client.gym_env import SimGymEnv
@@ -58,14 +71,23 @@ def _build_envs(contract: Dict[str, Any]) -> List[Any]:
     # inprocess: independent SimulationEnvironment instances
     with open(contract["paths"]["environment_json"], "r", encoding="utf-8") as f:
         env_dict = json.load(f)
-    scenario_dict = contract.get("scenario") or None
+    if scenario_dict is None:
+        scenario_dict = contract.get("scenario") or None
     if scenario_dict is None and os.path.exists(contract["paths"]["scenario_json"]):
         with open(contract["paths"]["scenario_json"], "r", encoding="utf-8") as f:
             scenario_dict = json.load(f)
     return [
-        build_env_from_dicts(env_dict, scenario_dict, seed=seed + i)
+        build_env_from_dicts(env_dict, scenario_dict, seed=seed_fn(i))
         for i in range(num_envs)
     ]
+
+
+def _write_curriculum_state(run_dir: str, controller: CurriculumController) -> None:
+    path = os.path.join(run_dir, "curriculum_state.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(controller.to_state(), f, indent=2)
+    os.replace(tmp, path)
 
 
 def _resolve_resume_checkpoint(contract: Dict[str, Any]) -> Optional[str]:
@@ -110,12 +132,60 @@ def run_training(run_dir: str) -> int:
                              "message": f"ppo_trainer cannot run algorithm '{training.get('algorithm')}'"})
         return 2
 
+    # ------------------------------------------------ curriculum setup
+    curriculum_dict = contract.get("curriculum")
+    curriculum: Optional[CurriculumController] = None
+    if curriculum_dict:
+        curr_errors = validate_curriculum(
+            curriculum_dict,
+            known_scenario_ids=[contract.get("scenario_id", "")],
+        )
+        if curr_errors:
+            _write_result(run_dir, "failed",
+                          error={"type": "invalid_curriculum",
+                                 "message": "; ".join(curr_errors)})
+            return 2
+        curriculum = CurriculumController(
+            CurriculumDefinition.from_dict(curriculum_dict),
+            base_seed=seed,
+            base_scenario_dict=contract.get("scenario"),
+        )
+        _write_curriculum_state(run_dir, curriculum)
+
+    resume_ckpt = _resolve_resume_checkpoint(contract)
+    if curriculum is not None and resume_ckpt:
+        import torch
+        ckpt_payload = torch.load(resume_ckpt, map_location="cpu", weights_only=False)
+        saved_state = ckpt_payload.get("curriculum_state")
+        restart = bool((contract.get("resume") or {}).get("restart_curriculum"))
+        if saved_state:
+            if saved_state.get("curriculum_fingerprint") != contract.get("curriculum_fingerprint"):
+                _write_result(run_dir, "failed",
+                              error={"type": "curriculum_mismatch",
+                                     "message": "Checkpoint curriculum does not match this "
+                                                "experiment's curriculum; refusing to resume."})
+                return 2
+            curriculum = CurriculumController.from_state(
+                curriculum.definition, saved_state,
+                base_scenario_dict=contract.get("scenario"))
+            _write_curriculum_state(run_dir, curriculum)
+        elif not restart:
+            _write_result(run_dir, "failed",
+                          error={"type": "curriculum_state_missing",
+                                 "message": "Checkpoint has no curriculum_state; resume "
+                                            "requires resume.restart_curriculum=true"})
+            return 2
+
     writer = MetricsWriter(paths["metrics_file"])
     registry = ArtifactRegistry(run_dir)
     traj = TrajectoryWriter(paths["trajectories_dir"]) if int(alg.get("trajectory_episodes", 0)) > 0 else None
     traj_limit = int(alg.get("trajectory_episodes", 0))
 
-    envs = _build_envs(contract)
+    if curriculum is not None:
+        envs = _build_envs(contract, scenario_dict=curriculum.stage_scenario_dict(),
+                           seed_fn=curriculum.stage_seed)
+    else:
+        envs = _build_envs(contract)
     num_envs = len(envs)
 
     # Per-env episode counters for trajectory capture
@@ -185,8 +255,21 @@ def run_training(run_dir: str) -> int:
                 float(np.clip(a[1], 0.0, 1.0)),
                 float(np.clip(a[2], 0.0, 1.0))]
 
+    def _curriculum_metrics() -> Dict[str, Any]:
+        stage = curriculum.current_stage if curriculum else None
+        return {
+            "stage_index": curriculum.stage_index,
+            "stage_id": stage.stage_id if stage else None,
+            "stage_name": stage.name if stage else None,
+            "episodes_in_stage": curriculum.episodes_in_stage,
+            "is_complete": curriculum.is_complete,
+        }
+
     def on_update(stats: Dict[str, Any]) -> None:
         step = int(stats["global_step"])
+
+        if curriculum is not None:
+            curriculum.record_training_episodes(len(stats["episodes"]))
 
         for ep in stats["episodes"]:
             writer.write("episode", timestep=step, metrics={
@@ -212,18 +295,28 @@ def run_training(run_dir: str) -> int:
         if ckpt_freq > 0 and step - state["last_ckpt"] >= ckpt_freq:
             state["last_ckpt"] = step
             ckpt_path = os.path.join(paths["checkpoints_dir"], f"policy_{step}.pt")
-            state["runner"].save_checkpoint(ckpt_path, step=step)
+            state["runner"].save_checkpoint(
+                ckpt_path, step=step,
+                extra={"curriculum_state": curriculum.to_state()} if curriculum else None)
             registry.register("checkpoint", os.path.relpath(ckpt_path, run_dir), step=step,
                               metadata={
                                   "algorithm": "ppo",
                                   "experiment_id": contract["experiment_id"],
                                   "run_id": contract["run_id"],
                                   "env_fingerprint": contract["environment_fingerprint"],
+                                  **({"curriculum_stage_index": curriculum.stage_index,
+                                      "curriculum_stage_id": curriculum.current_stage.stage_id}
+                                     if curriculum and curriculum.current_stage else {}),
                               })
 
         if eval_freq > 0 and step - state["last_eval"] >= eval_freq:
             state["last_eval"] = step
-            eval_env = _build_envs(contract)[0]
+            if curriculum is not None:
+                eval_env = _build_envs(
+                    contract, scenario_dict=curriculum.stage_scenario_dict(),
+                    seed_fn=curriculum.stage_seed)[0]
+            else:
+                eval_env = _build_envs(contract)[0]
 
             # Capture replay frames for the first eval episode only
             replay_frames: List[Dict[str, Any]] = []
@@ -262,6 +355,20 @@ def run_training(run_dir: str) -> int:
             registry.register("evaluation", os.path.relpath(eval_path, run_dir), step=step)
             writer.write("evaluation", timestep=step, metrics=dict(result.aggregate))
 
+            # Curriculum advancement consumes the evaluation aggregate —
+            # never raw training reward. The decision is always recorded.
+            if curriculum is not None:
+                decision = curriculum.evaluate_advancement(result.aggregate, timestep=step)
+                writer.write("curriculum", timestep=step, metrics={
+                    **_curriculum_metrics(), "decision": decision,
+                })
+                _write_curriculum_state(run_dir, curriculum)
+                if decision["advanced"]:
+                    new_envs = _build_envs(
+                        contract, scenario_dict=curriculum.stage_scenario_dict(),
+                        seed_fn=curriculum.stage_seed)
+                    state["runner"].set_envs(new_envs)
+
             if replay_frames:
                 replay_path = os.path.join(paths["replays_dir"], f"eval_{step}_ep0.json")
                 with open(replay_path, "w", encoding="utf-8") as f:
@@ -282,7 +389,6 @@ def run_training(run_dir: str) -> int:
 
     from sim_client.agents.ppo_baseline import PPORunner
 
-    resume_ckpt = _resolve_resume_checkpoint(contract)
     runner = PPORunner(
         env=envs,
         lr=float(training.get("learning_rate", 3e-4)),
@@ -306,13 +412,18 @@ def run_training(run_dir: str) -> int:
 
     # Final checkpoint + run-scope summary
     final_ckpt = os.path.join(paths["checkpoints_dir"], "policy_final.pt")
-    runner.save_checkpoint(final_ckpt, step=metrics.get("total_timesteps", 0))
+    runner.save_checkpoint(
+        final_ckpt, step=metrics.get("total_timesteps", 0),
+        extra={"curriculum_state": curriculum.to_state()} if curriculum else None)
     registry.register("checkpoint", os.path.relpath(final_ckpt, run_dir),
                       step=metrics.get("total_timesteps", 0),
                       metadata={"algorithm": "ppo", "final": True,
                                 "experiment_id": contract["experiment_id"],
                                 "run_id": contract["run_id"],
-                                "env_fingerprint": contract["environment_fingerprint"]})
+                                "env_fingerprint": contract["environment_fingerprint"],
+                                **({"curriculum_stage_index": curriculum.stage_index,
+                                    "curriculum_stage_id": curriculum.current_stage.stage_id}
+                                   if curriculum and curriculum.current_stage else {})})
     writer.write("run", timestep=metrics.get("total_timesteps", 0), metrics={
         "final": 1.0,
         "episodes_completed": metrics.get("episodes_completed", 0),
@@ -324,12 +435,15 @@ def run_training(run_dir: str) -> int:
     writer.close()
     if traj is not None:
         traj.close()
+    if curriculum is not None:
+        _write_curriculum_state(run_dir, curriculum)
 
     _write_result(run_dir, "completed",
                   total_timesteps=metrics.get("total_timesteps", 0),
                   episodes_completed=metrics.get("episodes_completed", 0),
                   wall_clock_time=metrics.get("wall_clock_time", 0.0),
-                  sps=metrics.get("sps", 0.0))
+                  sps=metrics.get("sps", 0.0),
+                  curriculum=curriculum.to_state() if curriculum else None)
     return 0
 
 

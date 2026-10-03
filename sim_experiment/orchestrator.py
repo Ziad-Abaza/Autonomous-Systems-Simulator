@@ -28,6 +28,7 @@ from sim_experiment.run import RunManager, RunStatus
 from sim_experiment.metrics import MetricsReader
 from sim_experiment.artifacts import ArtifactRegistry
 from sim_experiment.trainer_contract import build_contract, validate_contract
+from sim_experiment.curriculum_runtime import validate_curriculum
 from sim_experiment.headless import HeadlessSimProcessPool
 
 TRAINER_MODULES = {
@@ -87,6 +88,23 @@ class LocalTrainingOrchestrator:
         """
         module = self._resolve_trainer(trainer)
         experiment_dir = os.path.abspath(experiment_dir)
+
+        # Curriculum is a deterministic configuration surface: invalid
+        # definitions and unsupported env modes fail before any process or
+        # run directory is created (non-retryable configuration errors).
+        if manifest.curriculum_configuration:
+            curr_errors = validate_curriculum(
+                manifest.curriculum_configuration,
+                known_scenario_ids=[manifest.scenario_id],
+            )
+            if curr_errors:
+                raise ValueError("Invalid curriculum: " + "; ".join(curr_errors))
+            if env_mode == "tcp":
+                raise ValueError(
+                    "Curriculum training requires env_mode='inprocess'; "
+                    "TCP headless simulators cannot swap scenarios mid-run."
+                )
+
         rmg = self.run_manager
 
         if run_id is None:

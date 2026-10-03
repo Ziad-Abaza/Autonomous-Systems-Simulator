@@ -21,6 +21,7 @@ import os
 from typing import Dict, Any, List, Optional
 
 from sim_experiment.manifest import ExperimentManifest
+from sim_experiment.curriculum_runtime import curriculum_fingerprint
 
 TRAINER_CONTRACT_VERSION = "1.0"
 
@@ -52,6 +53,8 @@ def build_contract(
         "protocol_version": manifest.protocol_version,
         "observation_schema": manifest.observation_schema,
         "action_schema": manifest.action_schema,
+        "curriculum": manifest.curriculum_configuration,
+        "curriculum_fingerprint": curriculum_fingerprint(manifest.curriculum_configuration),
         "training": manifest.training.to_dict(),
         "evaluation": manifest.evaluation.to_dict(),
         "env_mode": env_mode,
@@ -106,4 +109,9 @@ def validate_contract(contract: Dict[str, Any]) -> List[str]:
         tcp = contract.get("tcp", {})
         if not tcp.get("ports"):
             errors.append("env_mode 'tcp' requires tcp.ports")
+        if contract.get("curriculum"):
+            errors.append(
+                "curriculum requires env_mode 'inprocess': headless TCP "
+                "simulators cannot swap scenarios mid-run"
+            )
     return errors
