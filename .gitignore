@@ -86,6 +86,9 @@ tracks/
 data/
 studio_settings.json
 
+# Agent working files (audits, helpers, scratch)
+.notebook/
+
 # Internal docs & dev evidence — phase reports, audits, and QA shots stay
 # local; the curated documentation system under docs/ IS tracked.
 docs/phase7_shots/
