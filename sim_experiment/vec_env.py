@@ -37,6 +37,9 @@ class VectorEnv:
     num_envs: int
     kind: str = "vector"
 
+    def __len__(self) -> int:
+        return self.num_envs
+
     def reset_all(self, seeds: List[Optional[int]]) -> List[Any]:
         raise NotImplementedError
 

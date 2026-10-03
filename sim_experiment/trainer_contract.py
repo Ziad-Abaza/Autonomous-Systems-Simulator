@@ -103,7 +103,7 @@ def validate_contract(contract: Dict[str, Any]) -> List[str]:
     else:
         errors.append("paths is not an object")
     env_mode = contract.get("env_mode")
-    if env_mode not in ("inprocess", "tcp"):
+    if env_mode not in ("inprocess", "tcp", "process"):
         errors.append(f"unknown env_mode: {env_mode!r}")
     if env_mode == "tcp":
         tcp = contract.get("tcp", {})

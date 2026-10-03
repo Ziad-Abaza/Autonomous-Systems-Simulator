@@ -22,11 +22,12 @@ from sim_experiment.metrics import MetricsWriter
 from sim_experiment.artifacts import ArtifactRegistry
 from sim_experiment.trajectory import TrajectoryWriter
 from sim_experiment.trainers._harness import (
-    write_result, load_contract, build_envs_from_contract,
-    resolve_resume_checkpoint, env_action_type, obs_to_vec,
+    write_result, load_contract, build_envs_from_contract, build_eval_env,
+    resolve_resume_checkpoint, env_action_type, obs_to_vec, probe_obs,
     setup_curriculum, write_curriculum_state,
     EpisodeTrajectoryRecorder, run_periodic_eval,
 )
+from sim_experiment.vec_env import is_vec_env
 
 
 def run_training(run_dir: str) -> int:
@@ -80,7 +81,7 @@ def run_training(run_dir: str) -> int:
         envs = build_envs_from_contract(contract)
     num_envs = len(envs)
 
-    obs_sample = envs[0].reset(seed=seed)[0]
+    obs_sample = probe_obs(envs, seed)
     obs_dim = obs_to_vec(obs_sample, 0).shape[0]
 
     from sim_client.agents.dqn_baseline import DQNRunner
@@ -154,11 +155,11 @@ def run_training(run_dir: str) -> int:
         if eval_on and eval_freq > 0 and step - state["last_eval"] >= eval_freq:
             state["last_eval"] = step
             if curriculum is not None:
-                eval_env = build_envs_from_contract(
+                eval_env = build_eval_env(
                     contract, scenario_dict=curriculum.stage_scenario_dict(),
-                    seed_fn=curriculum.stage_seed)[0]
+                    seed_fn=curriculum.stage_seed)
             else:
-                eval_env = build_envs_from_contract(contract)[0]
+                eval_env = build_eval_env(contract)
             act_fn = make_eval_policy(state["runner"])
             aggregate = run_periodic_eval(
                 contract, eval_env, act_fn, step, paths, registry, writer,
@@ -175,10 +176,14 @@ def run_training(run_dir: str) -> int:
                 })
                 write_curriculum_state(run_dir, curriculum)
                 if decision["advanced"]:
-                    new_envs = build_envs_from_contract(
-                        contract, scenario_dict=curriculum.stage_scenario_dict(),
-                        seed_fn=curriculum.stage_seed)
-                    state["runner"].set_envs(new_envs)
+                    if is_vec_env(envs):
+                        envs.set_scenario(curriculum.stage_scenario_dict())
+                        state["runner"].set_envs(envs)
+                    else:
+                        new_envs = build_envs_from_contract(
+                            contract, scenario_dict=curriculum.stage_scenario_dict(),
+                            seed_fn=curriculum.stage_seed)
+                        state["runner"].set_envs(new_envs)
                     recorder.attach(num_envs)
 
     runner.on_update = on_update

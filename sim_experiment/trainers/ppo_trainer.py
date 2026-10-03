@@ -29,10 +29,11 @@ from sim_experiment.metrics import MetricsWriter
 from sim_experiment.artifacts import ArtifactRegistry
 from sim_experiment.trajectory import TrajectoryWriter
 from sim_experiment.trainers._harness import (
-    write_result, load_contract, build_envs_from_contract,
+    write_result, load_contract, build_envs_from_contract, build_eval_env,
     resolve_resume_checkpoint, setup_curriculum, write_curriculum_state,
     EpisodeTrajectoryRecorder, run_periodic_eval,
 )
+from sim_experiment.vec_env import is_vec_env
 
 
 def run_training(run_dir: str) -> int:
@@ -75,7 +76,7 @@ def run_training(run_dir: str) -> int:
     recorder = EpisodeTrajectoryRecorder(traj, traj_limit, contract)
     recorder.attach(num_envs)
 
-    state = {"last_ckpt": 0, "last_eval": 0, "runner": None}
+    state = {"last_ckpt": 0, "last_eval": 0, "runner": None, "envs": envs}
     log_freq = max(1, int(training.get("logging_frequency", 1)))
     ckpt_freq = int(training.get("checkpoint_frequency", 0))
     eval_freq = int(training.get("eval_frequency", 0))
@@ -150,11 +151,11 @@ def run_training(run_dir: str) -> int:
         if eval_freq > 0 and step - state["last_eval"] >= eval_freq:
             state["last_eval"] = step
             if curriculum is not None:
-                eval_env = build_envs_from_contract(
+                eval_env = build_eval_env(
                     contract, scenario_dict=curriculum.stage_scenario_dict(),
-                    seed_fn=curriculum.stage_seed)[0]
+                    seed_fn=curriculum.stage_seed)
             else:
-                eval_env = build_envs_from_contract(contract)[0]
+                eval_env = build_eval_env(contract)
 
             aggregate = run_periodic_eval(
                 contract, eval_env, _policy, step, paths, registry, writer,
@@ -169,10 +170,18 @@ def run_training(run_dir: str) -> int:
                 })
                 write_curriculum_state(run_dir, curriculum)
                 if decision["advanced"]:
-                    new_envs = build_envs_from_contract(
-                        contract, scenario_dict=curriculum.stage_scenario_dict(),
-                        seed_fn=curriculum.stage_seed)
-                    state["runner"].set_envs(new_envs)
+                    envs = state["envs"]
+                    if is_vec_env(envs):
+                        # Process workers keep running — broadcast the new
+                        # stage scenario; set_envs marks rollout dirty and
+                        # reseeds each env deterministically.
+                        envs.set_scenario(curriculum.stage_scenario_dict())
+                        state["runner"].set_envs(envs)
+                    else:
+                        new_envs = build_envs_from_contract(
+                            contract, scenario_dict=curriculum.stage_scenario_dict(),
+                            seed_fn=curriculum.stage_seed)
+                        state["runner"].set_envs(new_envs)
                     recorder.attach(num_envs)
 
     from sim_client.agents.ppo_baseline import PPORunner

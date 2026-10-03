@@ -104,9 +104,19 @@ class PPORunner:
         on_step=None,
         resume_checkpoint: Optional[str] = None
     ):
-        # env may be a single environment or a list of independent envs
-        self.envs = list(env) if isinstance(env, (list, tuple)) else [env]
-        self.env = self.envs[0]
+        # env may be a single environment, a list of independent envs, or a
+        # VectorEnv (batched step_all/reset_all API — e.g. ProcessVectorEnv).
+        from sim_experiment.vec_env import is_vec_env
+        self._venv = env if is_vec_env(env) else None
+        if self._venv is not None:
+            self.envs = None
+            self.env = None
+            num_envs = self._venv.num_envs
+        else:
+            self.envs = list(env) if isinstance(env, (list, tuple)) else [env]
+            self.env = self.envs[0]
+            num_envs = len(self.envs)
+        self.num_envs = num_envs
         self.lr = lr
         self.gamma = gamma
         self.gae_lambda = gae_lambda
@@ -128,7 +138,10 @@ class PPORunner:
         np.random.seed(seed)
 
         # Determine dimensions
-        obs_sample = self.envs[0].reset(seed=seed)[0]
+        if self._venv is not None:
+            obs_sample = self._venv.reset_at(0, seed=seed)
+        else:
+            obs_sample = self.envs[0].reset(seed=seed)[0]
         if isinstance(obs_sample, dict):
             obs_sample = obs_sample.get('vector', np.zeros(23, dtype=np.float32))
         self.obs_dim = obs_sample.shape[0]
@@ -140,8 +153,8 @@ class PPORunner:
 
         # Effective rollout length is a multiple of the env count so every env
         # contributes a contiguous segment (per-segment GAE stays correct).
-        self.steps_per_env = max(1, num_steps // len(self.envs))
-        self.num_steps = self.steps_per_env * len(self.envs)
+        self.steps_per_env = max(1, num_steps // num_envs)
+        self.num_steps = self.steps_per_env * num_envs
 
         # Rollout Storage Buffers
         self.obs_buf = torch.zeros((self.num_steps, self.obs_dim), dtype=torch.float32, device=self.device)
@@ -162,7 +175,7 @@ class PPORunner:
         # streams never repeat across curriculum stages.
         self._envs_dirty = True
         self._env_epoch = 0
-        self._reset_counts = [1] * len(self.envs)
+        self._reset_counts = [1] * num_envs
 
         # Resume from a previous checkpoint if requested
         if resume_checkpoint:
@@ -190,20 +203,40 @@ class PPORunner:
 
     def set_envs(self, envs) -> None:
         """
-        Atomically swaps the environment list (e.g. curriculum stage change).
+        Atomically swaps the environment set (e.g. curriculum stage change).
         The rollout state is re-initialized at the start of the next update;
         env count must stay constant because rollout buffers are fixed-size.
+        Accepts a plain env list (sequential mode) or a VectorEnv matching
+        the current mode — modes cannot be mixed.
         """
-        new_envs = list(envs) if isinstance(envs, (list, tuple)) else [envs]
-        if len(new_envs) != len(self.envs):
-            raise ValueError(
-                f"set_envs requires exactly {len(self.envs)} envs, got {len(new_envs)}"
-            )
-        self.envs = new_envs
-        self.env = new_envs[0]
+        from sim_experiment.vec_env import is_vec_env
+        if is_vec_env(envs):
+            if self._venv is None:
+                raise ValueError("cannot swap a VectorEnv into a list-mode runner")
+            if envs.num_envs != self.num_envs:
+                raise ValueError(
+                    f"set_envs requires exactly {self.num_envs} envs, got {envs.num_envs}"
+                )
+            self._venv = envs
+        else:
+            if self._venv is not None:
+                raise ValueError("cannot swap an env list into a vec-mode runner")
+            new_envs = list(envs) if isinstance(envs, (list, tuple)) else [envs]
+            if len(new_envs) != self.num_envs:
+                raise ValueError(
+                    f"set_envs requires exactly {self.num_envs} envs, got {len(new_envs)}"
+                )
+            self.envs = new_envs
+            self.env = new_envs[0]
         self._env_epoch += 1
-        self._reset_counts = [1] * len(new_envs)
+        self._reset_counts = [1] * self.num_envs
         self._envs_dirty = True
+
+    def _env_reset(self, env_idx: int):
+        """Deterministic reseed+reset for one env (either backend)."""
+        if self._venv is not None:
+            return self._venv.reset_at(env_idx, seed=self._next_reset_seed(env_idx))
+        return self.envs[env_idx].reset(seed=self._next_reset_seed(env_idx))[0]
 
     def _next_reset_seed(self, env_idx: int) -> int:
         """Deterministic per-(epoch, env, reset) seed — distinct every reset."""
@@ -212,16 +245,102 @@ class PPORunner:
         self._reset_counts[env_idx] += 1
         return int(seed)
 
+    def _obs_to_vec(self, o):
+        if isinstance(o, dict):
+            o = o.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
+        return o
+
+    def _consume_step(self, idx, env_idx, next_obs_raw, reward, terminated,
+                      truncated, step_info, S, clamped_act):
+        """
+        Shared post-step bookkeeping for both rollout modes: buffer writes,
+        truncation bootstrap, episode accounting, on_step hook, done reset.
+        `S` carries the mutable per-update rollout state.
+        """
+        next_obs = self._obs_to_vec(next_obs_raw)
+
+        self.rewards_buf[idx] = float(reward)
+        done = terminated or truncated
+        self.terms_buf[idx] = 1.0 if terminated else 0.0
+        if truncated and not terminated:
+            # Truncation is not terminal: bootstrap V(final_obs) so the
+            # time limit does not fake a death. Computed BEFORE reset.
+            with torch.no_grad():
+                self.final_values_buf[idx] = self.agent.get_value(
+                    torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                ).squeeze()
+        else:
+            self.final_values_buf[idx] = 0.0
+        S['next_done'][env_idx] = torch.tensor(1.0 if done else 0.0, dtype=torch.float32, device=self.device)
+        S['next_obs'][env_idx] = torch.tensor(next_obs, dtype=torch.float32, device=self.device)
+
+        S['ep_return'][env_idx] += reward
+        S['ep_len'][env_idx] += 1
+        S['ep_lat'][env_idx].append(abs(step_info.get('lateral_offset', 0.0)))
+        S['ep_spd'][env_idx].append(step_info.get('speed', 0.0))
+
+        if self.on_step is not None:
+            self.on_step({
+                'env_idx': env_idx,
+                'global_step': S['gsteps'][idx],
+                'obs': next_obs,
+                'action': clamped_act,
+                'reward': float(reward),
+                'terminated': bool(terminated),
+                'truncated': bool(truncated),
+                'info': step_info,
+            })
+
+        if done:
+            ep_stats = {
+                'env_idx': env_idx,
+                'return': float(S['ep_return'][env_idx]),
+                # env-reported step count is authoritative (single
+                # source of truth; guards against counter drift)
+                'length': int(step_info.get('step', S['ep_len'][env_idx])),
+                'termination_reason': step_info.get('termination_reason', ''),
+                'mean_lateral_error': float(np.mean(S['ep_lat'][env_idx])) if S['ep_lat'][env_idx] else 0.0,
+                'mean_speed': float(np.mean(S['ep_spd'][env_idx])) if S['ep_spd'][env_idx] else 0.0,
+                'checkpoints_passed': step_info.get('checkpoints_passed', 0),
+                'is_colliding': bool(step_info.get('is_colliding', False)),
+                'is_on_road': bool(step_info.get('is_on_road', True)),
+            }
+            S['new_episodes'].append(ep_stats)
+
+            self.metrics['episodes_completed'] += 1
+            self.metrics['episode_returns'].append(ep_stats['return'])
+            self.metrics['episode_lengths'].append(ep_stats['length'])
+            self.metrics['mean_lateral_errors'].append(ep_stats['mean_lateral_error'])
+            self.metrics['mean_speeds'].append(ep_stats['mean_speed'])
+            self.metrics['completion_rates'].append(ep_stats['checkpoints_passed'])
+
+            reason = ep_stats['termination_reason']
+            if 'collision' in reason:
+                self.metrics['collision_count'] += 1
+            elif 'off_road' in reason:
+                self.metrics['off_road_count'] += 1
+
+            S['ep_return'][env_idx] = 0.0
+            S['ep_len'][env_idx] = 0
+            S['ep_lat'][env_idx] = []
+            S['ep_spd'][env_idx] = []
+            reset_obs = self._env_reset(env_idx)
+            S['next_obs'][env_idx] = torch.tensor(
+                self._obs_to_vec(reset_obs), dtype=torch.float32, device=self.device)
+
+    def _clamp_act(self, act_np):
+        return [
+            float(np.clip(act_np[0], -1.0, 1.0)),
+            float(np.clip(act_np[1], 0.0, 1.0)),
+            float(np.clip(act_np[2], 0.0, 1.0))
+        ]
+
     def train(self, total_timesteps: int = 50000, log_interval: int = 2048) -> Dict[str, Any]:
         """Runs the PPO training loop for total_timesteps."""
         start_time = time.perf_counter()
-        num_envs = len(self.envs)
+        num_envs = self.num_envs
         spe = self.steps_per_env
-
-        def _to_vec(o):
-            if isinstance(o, dict):
-                o = o.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
-            return o
+        _to_vec = self._obs_to_vec
 
         # Per-env rollout state (initialized lazily via the _envs_dirty flag
         # so set_envs() mid-training triggers a clean re-reset).
@@ -247,104 +366,75 @@ class PPORunner:
                 ep_len = [0] * num_envs
                 ep_lat_errors = [[] for _ in range(num_envs)]
                 ep_speeds = [[] for _ in range(num_envs)]
-                for e, env in enumerate(self.envs):
-                    o, _ = env.reset(seed=self._next_reset_seed(e))
-                    next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
-                    next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
+                if self._venv is not None:
+                    seeds = [self._next_reset_seed(e) for e in range(num_envs)]
+                    for o in self._venv.reset_all(seeds):
+                        next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
+                        next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
+                else:
+                    for e, env in enumerate(self.envs):
+                        o, _ = env.reset(seed=self._next_reset_seed(e))
+                        next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
+                        next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
 
             new_episodes: List[Dict[str, Any]] = []
+            S = {
+                'next_obs': next_obs_tensors, 'next_done': next_done_tensors,
+                'ep_return': ep_return, 'ep_len': ep_len,
+                'ep_lat': ep_lat_errors, 'ep_spd': ep_speeds,
+                'new_episodes': new_episodes,
+                'gsteps': [0] * self.num_steps,
+            }
 
-            # 1. Rollout Collection — contiguous segment per environment
-            for step in range(self.num_steps):
-                env_idx = step // spe
-                env = self.envs[env_idx]
-                global_step += 1
-                self.obs_buf[step] = next_obs_tensors[env_idx]
-                self.dones_buf[step] = next_done_tensors[env_idx]
+            # 1. Rollout Collection
+            if self._venv is not None:
+                # Batched: every env steps once per tick (real parallelism
+                # for process workers). Buffer layout stays per-env
+                # contiguous (idx = e*spe + t) so GAE is unchanged.
+                for t in range(spe):
+                    acts = []
+                    for e in range(num_envs):
+                        idx = e * spe + t
+                        global_step += 1
+                        S['gsteps'][idx] = global_step
+                        self.obs_buf[idx] = next_obs_tensors[e]
+                        self.dones_buf[idx] = next_done_tensors[e]
+                        with torch.no_grad():
+                            action, logprob, _, value = self.agent.get_action_and_value(next_obs_tensors[e].unsqueeze(0))
+                            self.values_buf[idx] = value.squeeze()
+                        self.actions_buf[idx] = action.squeeze(0)
+                        self.logprobs_buf[idx] = logprob.squeeze()
+                        acts.append(self._clamp_act(action.squeeze(0).cpu().numpy()))
+                    results = self._venv.step_all(acts)
+                    for e, (n_obs, rew, term, trunc, sinfo) in enumerate(results):
+                        self._consume_step(e * spe + t, e, n_obs, rew, term,
+                                           trunc, sinfo, S, acts[e])
+                    next_obs_tensors = S['next_obs']
+                    next_done_tensors = S['next_done']
+            else:
+                # Sequential: contiguous segment per environment.
+                for step in range(self.num_steps):
+                    env_idx = step // spe
+                    env = self.envs[env_idx]
+                    global_step += 1
+                    S['gsteps'][step] = global_step
+                    self.obs_buf[step] = next_obs_tensors[env_idx]
+                    self.dones_buf[step] = next_done_tensors[env_idx]
 
-                with torch.no_grad():
-                    action, logprob, _, value = self.agent.get_action_and_value(next_obs_tensors[env_idx].unsqueeze(0))
-                    self.values_buf[step] = value.squeeze()
-                self.actions_buf[step] = action.squeeze(0)
-                self.logprobs_buf[step] = logprob.squeeze()
-
-                # Step simulation
-                act_np = action.squeeze(0).cpu().numpy()
-                clamped_act = [
-                    float(np.clip(act_np[0], -1.0, 1.0)),
-                    float(np.clip(act_np[1], 0.0, 1.0)),
-                    float(np.clip(act_np[2], 0.0, 1.0))
-                ]
-                next_obs, reward, terminated, truncated, step_info = env.step(clamped_act)
-                next_obs = _to_vec(next_obs)
-
-                self.rewards_buf[step] = float(reward)
-                done = terminated or truncated
-                self.terms_buf[step] = 1.0 if terminated else 0.0
-                if truncated and not terminated:
-                    # Truncation is not terminal: bootstrap V(final_obs) so the
-                    # time limit does not fake a death. Computed BEFORE reset.
                     with torch.no_grad():
-                        self.final_values_buf[step] = self.agent.get_value(
-                            torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-                        ).squeeze()
-                else:
-                    self.final_values_buf[step] = 0.0
-                next_done_tensors[env_idx] = torch.tensor(1.0 if done else 0.0, dtype=torch.float32, device=self.device)
-                next_obs_tensors[env_idx] = torch.tensor(next_obs, dtype=torch.float32, device=self.device)
+                        action, logprob, _, value = self.agent.get_action_and_value(next_obs_tensors[env_idx].unsqueeze(0))
+                        self.values_buf[step] = value.squeeze()
+                    self.actions_buf[step] = action.squeeze(0)
+                    self.logprobs_buf[step] = logprob.squeeze()
 
-                ep_return[env_idx] += reward
-                ep_len[env_idx] += 1
-                ep_lat_errors[env_idx].append(abs(step_info.get('lateral_offset', 0.0)))
-                ep_speeds[env_idx].append(step_info.get('speed', 0.0))
-
-                if self.on_step is not None:
-                    self.on_step({
-                        'env_idx': env_idx,
-                        'global_step': global_step,
-                        'obs': next_obs,
-                        'action': clamped_act,
-                        'reward': float(reward),
-                        'terminated': bool(terminated),
-                        'truncated': bool(truncated),
-                        'info': step_info,
-                    })
-
-                if done:
-                    ep_stats = {
-                        'env_idx': env_idx,
-                        'return': float(ep_return[env_idx]),
-                        # env-reported step count is authoritative (single
-                        # source of truth; guards against counter drift)
-                        'length': int(step_info.get('step', ep_len[env_idx])),
-                        'termination_reason': step_info.get('termination_reason', ''),
-                        'mean_lateral_error': float(np.mean(ep_lat_errors[env_idx])) if ep_lat_errors[env_idx] else 0.0,
-                        'mean_speed': float(np.mean(ep_speeds[env_idx])) if ep_speeds[env_idx] else 0.0,
-                        'checkpoints_passed': step_info.get('checkpoints_passed', 0),
-                        'is_colliding': bool(step_info.get('is_colliding', False)),
-                        'is_on_road': bool(step_info.get('is_on_road', True)),
-                    }
-                    new_episodes.append(ep_stats)
-
-                    self.metrics['episodes_completed'] += 1
-                    self.metrics['episode_returns'].append(ep_stats['return'])
-                    self.metrics['episode_lengths'].append(ep_stats['length'])
-                    self.metrics['mean_lateral_errors'].append(ep_stats['mean_lateral_error'])
-                    self.metrics['mean_speeds'].append(ep_stats['mean_speed'])
-                    self.metrics['completion_rates'].append(ep_stats['checkpoints_passed'])
-
-                    reason = ep_stats['termination_reason']
-                    if 'collision' in reason:
-                        self.metrics['collision_count'] += 1
-                    elif 'off_road' in reason:
-                        self.metrics['off_road_count'] += 1
-
-                    ep_return[env_idx] = 0.0
-                    ep_len[env_idx] = 0
-                    ep_lat_errors[env_idx] = []
-                    ep_speeds[env_idx] = []
-                    reset_obs, _ = env.reset(seed=self._next_reset_seed(env_idx))
-                    next_obs_tensors[env_idx] = torch.tensor(_to_vec(reset_obs), dtype=torch.float32, device=self.device)
+                    # Step simulation
+                    clamped_act = self._clamp_act(action.squeeze(0).cpu().numpy())
+                    next_obs, reward, terminated, truncated, step_info = env.step(clamped_act)
+                    self._consume_step(step, env_idx, next_obs, reward,
+                                       terminated, truncated, step_info, S,
+                                       clamped_act)
+                    next_obs_tensors = S['next_obs']
+                    next_done_tensors = S['next_done']
 
             # 2. Generalized Advantage Estimation (per contiguous env segment)
             with torch.no_grad():

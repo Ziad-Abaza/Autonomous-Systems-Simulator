@@ -65,8 +65,16 @@ class DQNRunner:
             raise ValueError(
                 f"DQN requires a discrete action space with >= 2 actions "
                 f"(got {num_actions})")
-        self.envs = list(env) if isinstance(env, (list, tuple)) else [env]
-        self.env = self.envs[0]
+        from sim_experiment.vec_env import is_vec_env
+        self._venv = env if is_vec_env(env) else None
+        if self._venv is not None:
+            self.envs = None
+            self.env = None
+            self.num_envs = env.num_envs
+        else:
+            self.envs = list(env) if isinstance(env, (list, tuple)) else [env]
+            self.env = self.envs[0]
+            self.num_envs = len(self.envs)
         self.obs_dim = obs_dim
         self.num_actions = int(num_actions)
         self.gamma = gamma
@@ -98,7 +106,7 @@ class DQNRunner:
 
         self._envs_dirty = True
         self._env_epoch = 0
-        self._reset_counts = [1] * len(self.envs)
+        self._reset_counts = [1] * self.num_envs
 
         if resume_checkpoint:
             self.load_checkpoint(resume_checkpoint)
@@ -115,15 +123,31 @@ class DQNRunner:
     # ------------------------------------------------------------- env mgmt
 
     def set_envs(self, envs) -> None:
-        new_envs = list(envs) if isinstance(envs, (list, tuple)) else [envs]
-        if len(new_envs) != len(self.envs):
-            raise ValueError(
-                f"set_envs requires exactly {len(self.envs)} envs, got {len(new_envs)}")
-        self.envs = new_envs
-        self.env = new_envs[0]
+        from sim_experiment.vec_env import is_vec_env
+        if is_vec_env(envs):
+            if self._venv is None:
+                raise ValueError("cannot swap a VectorEnv into a list-mode runner")
+            if envs.num_envs != self.num_envs:
+                raise ValueError(
+                    f"set_envs requires exactly {self.num_envs} envs, got {envs.num_envs}")
+            self._venv = envs
+        else:
+            if self._venv is not None:
+                raise ValueError("cannot swap an env list into a vec-mode runner")
+            new_envs = list(envs) if isinstance(envs, (list, tuple)) else [envs]
+            if len(new_envs) != self.num_envs:
+                raise ValueError(
+                    f"set_envs requires exactly {self.num_envs} envs, got {len(new_envs)}")
+            self.envs = new_envs
+            self.env = new_envs[0]
         self._env_epoch += 1
-        self._reset_counts = [1] * len(new_envs)
+        self._reset_counts = [1] * self.num_envs
         self._envs_dirty = True
+
+    def _env_reset(self, env_idx: int):
+        if self._venv is not None:
+            return self._venv.reset_at(env_idx, seed=self._next_reset_seed(env_idx))
+        return self.envs[env_idx].reset(seed=self._next_reset_seed(env_idx))[0]
 
     def _next_reset_seed(self, env_idx: int) -> int:
         seed = (self.seed + self._env_epoch * 1_000_003
@@ -142,9 +166,71 @@ class DQNRunner:
 
     # ------------------------------------------------------------- training
 
+    def _consume_step(self, e, action_idx, next_obs, reward, terminated,
+                      truncated, info, S):
+        """Shared post-step bookkeeping for list and vector rollout modes."""
+        done = terminated or truncated
+        self.buffer.add(S["obs"][e], [action_idx], reward,
+                        self._vec(next_obs), bool(terminated))
+        S["obs"][e] = self._vec(next_obs)
+        S["gstep"] += 1
+
+        if self.on_step is not None:
+            self.on_step({
+                "env_idx": e, "obs": np.asarray(S["obs"][e]).tolist(),
+                "action": int(action_idx),
+                "reward": float(reward),
+                "terminated": bool(terminated), "truncated": bool(truncated),
+                "info": info,
+            })
+
+        S["ep_return"][e] += float(reward)
+        S["ep_len"][e] += 1
+        S["ep_lat"][e].append(abs(float(info.get("lateral_offset", 0.0))))
+        S["ep_spd"][e].append(float(info.get("speed", 0.0)))
+
+        if done:
+            ep_stats = {
+                "env_idx": e,
+                "return": float(S["ep_return"][e]),
+                "length": int(info.get("step", S["ep_len"][e])),
+                "termination_reason": str(info.get("termination_reason", "")),
+                "checkpoints_passed": int(info.get("checkpoints_passed", 0)),
+                "mean_lateral_error": float(np.mean(S["ep_lat"][e])) if S["ep_lat"][e] else 0.0,
+                "mean_speed": float(np.mean(S["ep_spd"][e])) if S["ep_spd"][e] else 0.0,
+                "collided": bool(info.get("is_colliding", False)),
+                "off_road": not bool(info.get("is_on_road", True)),
+                "completion": float(info.get("checkpoints_passed", 0)),
+            }
+            S["new_episodes"].append(ep_stats)
+            self.metrics["episodes_completed"] += 1
+            self.metrics["episode_returns"].append(ep_stats["return"])
+            self.metrics["episode_lengths"].append(ep_stats["length"])
+            self.metrics["mean_lateral_errors"].append(ep_stats["mean_lateral_error"])
+            self.metrics["mean_speeds"].append(ep_stats["mean_speed"])
+            self.metrics["completion_rates"].append(ep_stats["completion"])
+            if ep_stats["collided"]:
+                self.metrics["collision_count"] += 1
+            if ep_stats["off_road"]:
+                self.metrics["off_road_count"] += 1
+            S["ep_return"][e] = 0.0
+            S["ep_len"][e] = 0
+            S["ep_lat"][e] = []
+            S["ep_spd"][e] = []
+            S["obs"][e] = self._vec(self._env_reset(e))
+
+        # Gradient updates
+        g = S["gstep"]
+        if (g >= self.warmup_steps
+                and g % self.train_freq == 0
+                and self.buffer.size >= self.batch_size):
+            S["last_td_loss"] = self._update()
+            if g % self.target_update_interval == 0:
+                self.q_target.load_state_dict(self.q.state_dict())
+
     def train(self, total_timesteps: int = 50_000) -> Dict[str, Any]:
         start_time = time.perf_counter()
-        num_envs = len(self.envs)
+        num_envs = self.num_envs
 
         obs = [None] * num_envs
         ep_return = [0.0] * num_envs
@@ -159,82 +245,63 @@ class DQNRunner:
         while global_step - self.global_step_offset < total_timesteps:
             if self._envs_dirty:
                 self._envs_dirty = False
-                for e, env in enumerate(self.envs):
-                    o, _ = env.reset(seed=self._next_reset_seed(e))
-                    obs[e] = self._vec(o)
+                if self._venv is not None:
+                    seeds = [self._next_reset_seed(e) for e in range(num_envs)]
+                    for e, o in enumerate(self._venv.reset_all(seeds)):
+                        obs[e] = self._vec(o)
+                else:
+                    for e, env in enumerate(self.envs):
+                        o, _ = env.reset(seed=self._next_reset_seed(e))
+                        obs[e] = self._vec(o)
                 ep_return = [0.0] * num_envs
                 ep_len = [0] * num_envs
                 ep_lat = [[] for _ in range(num_envs)]
                 ep_spd = [[] for _ in range(num_envs)]
 
-            for e, env in enumerate(self.envs):
-                eps = self.epsilon(global_step)
-                if self._explore_rng.random() < eps or global_step < self.warmup_steps:
-                    action_idx = int(self._explore_rng.integers(0, self.num_actions))
-                else:
-                    with torch.no_grad():
-                        q_vals = self.q(torch.tensor(
-                            obs[e], dtype=torch.float32, device=self.device).unsqueeze(0))
-                    action_idx = int(q_vals.argmax(dim=1).item())
+            S = {
+                "obs": obs, "gstep": global_step,
+                "ep_return": ep_return, "ep_len": ep_len,
+                "ep_lat": ep_lat, "ep_spd": ep_spd,
+                "new_episodes": new_episodes, "last_td_loss": last_td_loss,
+            }
 
-                next_obs, reward, terminated, truncated, info = env.step(action_idx)
-                done = terminated or truncated
-                self.buffer.add(obs[e], [action_idx], reward, self._vec(next_obs), bool(terminated))
-                obs[e] = self._vec(next_obs)
-                global_step += 1
+            if self._venv is not None:
+                # Batched: all envs step together (process-parallel backends
+                # execute the steps concurrently). Explore-RNG consumption
+                # order stays env-major, identical to the sequential path.
+                action_idxs = []
+                for e in range(num_envs):
+                    eps = self.epsilon(global_step + e)
+                    if self._explore_rng.random() < eps or global_step + e < self.warmup_steps:
+                        action_idx = int(self._explore_rng.integers(0, self.num_actions))
+                    else:
+                        with torch.no_grad():
+                            q_vals = self.q(torch.tensor(
+                                obs[e], dtype=torch.float32, device=self.device).unsqueeze(0))
+                        action_idx = int(q_vals.argmax(dim=1).item())
+                    action_idxs.append(action_idx)
+                results = self._venv.step_all(action_idxs)
+                for e, (n_obs, rew, term, trunc, info) in enumerate(results):
+                    self._consume_step(e, action_idxs[e], n_obs, rew, term,
+                                       trunc, info, S)
+                global_step = S["gstep"]
+                last_td_loss = S["last_td_loss"]
+            else:
+                for e, env in enumerate(self.envs):
+                    eps = self.epsilon(global_step)
+                    if self._explore_rng.random() < eps or global_step < self.warmup_steps:
+                        action_idx = int(self._explore_rng.integers(0, self.num_actions))
+                    else:
+                        with torch.no_grad():
+                            q_vals = self.q(torch.tensor(
+                                obs[e], dtype=torch.float32, device=self.device).unsqueeze(0))
+                        action_idx = int(q_vals.argmax(dim=1).item())
 
-                if self.on_step is not None:
-                    self.on_step({
-                        "env_idx": e, "obs": np.asarray(obs[e]).tolist(),
-                        "action": int(action_idx),
-                        "reward": float(reward),
-                        "terminated": bool(terminated), "truncated": bool(truncated),
-                        "info": info,
-                    })
-
-                ep_return[e] += float(reward)
-                ep_len[e] += 1
-                ep_lat[e].append(abs(float(info.get("lateral_offset", 0.0))))
-                ep_spd[e].append(float(info.get("speed", 0.0)))
-
-                if done:
-                    ep_stats = {
-                        "env_idx": e,
-                        "return": float(ep_return[e]),
-                        "length": int(info.get("step", ep_len[e])),
-                        "termination_reason": str(info.get("termination_reason", "")),
-                        "checkpoints_passed": int(info.get("checkpoints_passed", 0)),
-                        "mean_lateral_error": float(np.mean(ep_lat[e])) if ep_lat[e] else 0.0,
-                        "mean_speed": float(np.mean(ep_spd[e])) if ep_spd[e] else 0.0,
-                        "collided": bool(info.get("is_colliding", False)),
-                        "off_road": not bool(info.get("is_on_road", True)),
-                        "completion": float(info.get("checkpoints_passed", 0)),
-                    }
-                    new_episodes.append(ep_stats)
-                    self.metrics["episodes_completed"] += 1
-                    self.metrics["episode_returns"].append(ep_stats["return"])
-                    self.metrics["episode_lengths"].append(ep_stats["length"])
-                    self.metrics["mean_lateral_errors"].append(ep_stats["mean_lateral_error"])
-                    self.metrics["mean_speeds"].append(ep_stats["mean_speed"])
-                    self.metrics["completion_rates"].append(ep_stats["completion"])
-                    if ep_stats["collided"]:
-                        self.metrics["collision_count"] += 1
-                    if ep_stats["off_road"]:
-                        self.metrics["off_road_count"] += 1
-                    ep_return[e] = 0.0
-                    ep_len[e] = 0
-                    ep_lat[e] = []
-                    ep_spd[e] = []
-                    o, _ = env.reset(seed=self._next_reset_seed(e))
-                    obs[e] = self._vec(o)
-
-                # Gradient updates
-                if (global_step >= self.warmup_steps
-                        and global_step % self.train_freq == 0
-                        and self.buffer.size >= self.batch_size):
-                    last_td_loss = self._update()
-                    if global_step % self.target_update_interval == 0:
-                        self.q_target.load_state_dict(self.q.state_dict())
+                    next_obs, reward, terminated, truncated, info = env.step(action_idx)
+                    self._consume_step(e, action_idx, next_obs, reward,
+                                       terminated, truncated, info, S)
+                    global_step = S["gstep"]
+                    last_td_loss = S["last_td_loss"]
 
             if (global_step - self.global_step_offset) % self.update_interval == 0 or \
                global_step - self.global_step_offset >= total_timesteps:

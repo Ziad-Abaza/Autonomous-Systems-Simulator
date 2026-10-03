@@ -62,10 +62,41 @@ def build_envs_from_contract(
     if scenario_dict is None and os.path.exists(contract["paths"]["scenario_json"]):
         with open(contract["paths"]["scenario_json"], "r", encoding="utf-8") as f:
             scenario_dict = json.load(f)
+
+    if contract["env_mode"] == "process":
+        from sim_experiment.process_env import ProcessVectorEnv
+        return ProcessVectorEnv(
+            env_dict, scenario_dict,
+            seeds=[seed_fn(i) for i in range(num_envs)],
+        )
+
     return [
         build_env_from_dicts(env_dict, scenario_dict, seed=seed_fn(i))
         for i in range(num_envs)
     ]
+
+
+def build_eval_env(
+    contract: Dict[str, Any],
+    scenario_dict: Optional[Dict[str, Any]] = None,
+    seed_fn: Optional[Callable[[int], int]] = None,
+) -> Any:
+    """
+    Builds a single in-process evaluation environment from the contract's
+    serialized environment/scenario — independent of env_mode. Evaluation
+    always runs in-process so replay capture (`env.vehicle`) and frozen
+    determinism are available regardless of the training env backend.
+    """
+    seed = int(contract["seed"])
+    seed_fn = seed_fn or (lambda i: seed + i)
+    with open(contract["paths"]["environment_json"], "r", encoding="utf-8") as f:
+        env_dict = json.load(f)
+    if scenario_dict is None:
+        scenario_dict = contract.get("scenario") or None
+    if scenario_dict is None and os.path.exists(contract["paths"]["scenario_json"]):
+        with open(contract["paths"]["scenario_json"], "r", encoding="utf-8") as f:
+            scenario_dict = json.load(f)
+    return build_env_from_dicts(env_dict, scenario_dict, seed=seed_fn(0))
 
 
 def resolve_resume_checkpoint(contract: Dict[str, Any]) -> Optional[str]:
@@ -118,6 +149,15 @@ def obs_to_vec(obs: Any, obs_dim: int) -> np.ndarray:
     if isinstance(obs, dict):
         obs = obs.get("vector", np.zeros(obs_dim, dtype=np.float32))
     return np.asarray(obs, dtype=np.float32)
+
+
+def probe_obs(envs: Any, seed: int) -> Any:
+    """Single observation for dimension probing — works for env lists and
+    VectorEnv backends (reset env 0 with an explicit seed)."""
+    from sim_experiment.vec_env import is_vec_env
+    if is_vec_env(envs):
+        return envs.reset_at(0, seed=seed)
+    return envs[0].reset(seed=seed)[0]
 
 
 # ----------------------------------------------------------------- curriculum
