@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import os
 import time
+import json
 import math
 from typing import Optional, Dict, Any, Tuple
 
@@ -326,8 +327,11 @@ class SimulationStudioApp:
             self.train_state["selected_experiment"] = sel_exp
 
         sel_run = None
+        sel_algo = None
         if sel_exp:
             try:
+                manifest = self.exp_mgr.load(sel_exp)
+                sel_algo = manifest.training.algorithm
                 exp_dir = self.exp_mgr.experiment_dir(sel_exp)
                 runs = self.run_mgr.list_runs(exp_dir)
                 run_id = self.train_state["selected_run_id"] or (runs[-1]["run_id"] if runs else None)
@@ -340,13 +344,29 @@ class SimulationStudioApp:
                         r["metrics"].get("reward") for r in eps[-60:]
                         if isinstance(r.get("metrics", {}).get("reward"), (int, float))
                     ]
+                    cpath = os.path.join(exp_dir, "runs", run_id, "curriculum_state.json")
+                    if os.path.exists(cpath):
+                        with open(cpath, "r", encoding="utf-8") as f:
+                            sel_run["curriculum"] = json.load(f)
             except Exception:
                 sel_run = None
+
+        batch_status = None
+        batch_rec = self.train_state.get("batch")
+        if batch_rec:
+            try:
+                batch_status = batch_rec["scheduler"].status(batch_rec["batch_id"])
+            except Exception:
+                batch_status = None
 
         return {
             "experiments": exps,
             "selected_experiment": sel_exp,
+            "selected_algorithm": sel_algo,
             "selected_run": sel_run,
+            "batch_status": batch_status,
+            "dataset_report": self.train_state.get("dataset_report"),
+            "comparison": self.train_state.get("comparison"),
         }
 
     def _train_action(self, prop_id: str) -> None:
@@ -377,10 +397,54 @@ class SimulationStudioApp:
             elif prop_id == "trn_launch" and ts["selected_experiment"]:
                 manifest = self.exp_mgr.load(ts["selected_experiment"])
                 exp_dir = self.exp_mgr.experiment_dir(manifest.experiment_id)
-                run_id = self.orch.launch(manifest, exp_dir, trainer="ppo")
+                run_id = self.orch.launch(manifest, exp_dir,
+                                          trainer=manifest.training.algorithm)
                 self.exp_mgr.mark_launched(manifest.experiment_id)
                 ts["selected_run_id"] = run_id
-                print(f"[Studio] Launched PPO run {run_id}")
+                print(f"[Studio] Launched {manifest.training.algorithm.upper()} run {run_id}")
+
+            elif prop_id == "trn_batch" and ts["selected_experiment"]:
+                from sim_experiment.scheduler import BatchScheduler, RetryPolicy
+                manifest = self.exp_mgr.load(ts["selected_experiment"])
+                exp_dir = self.exp_mgr.experiment_dir(manifest.experiment_id)
+                base_seed = manifest.random_seed
+                scheduler = BatchScheduler(experiments_root=self.exp_mgr.root_dir,
+                                           max_workers=2)
+                batch = scheduler.create_batch(
+                    manifest, exp_dir,
+                    specs=[{"seed": base_seed}, {"seed": base_seed + 1}],
+                    trainer=manifest.training.algorithm,
+                    retry_policy=RetryPolicy(max_retries=0))
+                scheduler.tick()
+                ts["batch"] = {"scheduler": scheduler,
+                               "batch_id": batch["batch_id"],
+                               "exp_dir": exp_dir}
+                self.exp_mgr.mark_launched(manifest.experiment_id)
+                print(f"[Studio] Batch {batch['batch_id']} started "
+                      f"({batch['jobs']} jobs)")
+
+            elif prop_id == "trn_batch_cancel" and ts.get("batch"):
+                result = ts["batch"]["scheduler"].cancel_batch(ts["batch"]["batch_id"])
+                print(f"[Studio] Batch cancelled: {result['status']}")
+
+            elif prop_id == "trn_dataset" and ts["selected_experiment"] and ts["selected_run_id"]:
+                from sim_experiment.dataset import export_dataset
+                exp_dir = self.exp_mgr.experiment_dir(ts["selected_experiment"])
+                rd = self.run_mgr.run_dir(exp_dir, ts["selected_run_id"])
+                out = os.path.join(rd, "dataset_export")
+                ts["dataset_report"] = export_dataset(rd, out)
+                print(f"[Studio] Dataset exported: "
+                      f"{ts['dataset_report']['episodes']} episodes, "
+                      f"{ts['dataset_report']['steps']} steps -> {out}")
+
+            elif prop_id == "trn_compare" and ts["selected_experiment"]:
+                from sim_experiment.analytics import compare_runs, list_run_dirs
+                exp_dir = self.exp_mgr.experiment_dir(ts["selected_experiment"])
+                ts["comparison"] = compare_runs(
+                    list_run_dirs(exp_dir), metric="reward", scope="episode",
+                    smooth_window=10)
+                n = len(ts["comparison"]["series"])
+                print(f"[Studio] Compared {n} runs on episode reward")
 
             elif prop_id == "trn_cancel" and ts["selected_experiment"] and ts["selected_run_id"]:
                 exp_dir = self.exp_mgr.experiment_dir(ts["selected_experiment"])
@@ -395,7 +459,7 @@ class SimulationStudioApp:
                 if ckpt:
                     manifest = self.exp_mgr.load(ts["selected_experiment"])
                     new_id = self.orch.launch(
-                        manifest, exp_dir, trainer="ppo",
+                        manifest, exp_dir, trainer=manifest.training.algorithm,
                         resume_from={"parent_run_id": ts["selected_run_id"],
                                      "checkpoint": os.path.join(rd, ckpt["path"])},
                     )
@@ -414,12 +478,15 @@ class SimulationStudioApp:
                     env = build_env_from_dicts(manifest.environment,
                                                manifest.scenario_configuration,
                                                seed=manifest.random_seed)
-                    policy = make_policy_from_checkpoint(os.path.join(rd, ckpt["path"]), "ppo")
+                    policy = make_policy_from_checkpoint(
+                        os.path.join(rd, ckpt["path"]),
+                        algorithm=manifest.training.algorithm)
                     result = evaluate_policy(
                         env, policy,
                         seeds=manifest.evaluation.eval_seeds,
                         num_episodes=manifest.evaluation.num_episodes,
-                        result_kwargs={"checkpoint_path": ckpt["path"], "algorithm": "ppo",
+                        result_kwargs={"checkpoint_path": ckpt["path"],
+                                       "algorithm": manifest.training.algorithm,
                                        "env_fingerprint": manifest.environment_fingerprint,
                                        "scenario_id": manifest.scenario_id},
                     )
@@ -453,6 +520,24 @@ class SimulationStudioApp:
         if now - self.train_state["last_poll"] < 1.0:
             return
         self.train_state["last_poll"] = now
+
+        # Drive any active batch scheduler (dispatch + poll transitions)
+        batch_rec = self.train_state.get("batch")
+        if batch_rec:
+            try:
+                sched = batch_rec["scheduler"]
+                st = sched.status(batch_rec["batch_id"])
+                if st["finished"] < st["total"]:
+                    sched.tick(batch_rec["batch_id"])
+                elif not batch_rec.get("finalized"):
+                    result = sched._finalize_batch(
+                        sched._batches[batch_rec["batch_id"]], "completed")
+                    batch_rec["finalized"] = True
+                    print(f"[Studio] Batch {batch_rec['batch_id']} finished: "
+                          f"{result['status']}")
+            except Exception:
+                pass
+
         sel_exp = self.train_state["selected_experiment"]
         if not sel_exp:
             return

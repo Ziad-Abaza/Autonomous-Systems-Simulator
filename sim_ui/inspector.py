@@ -266,7 +266,10 @@ class EnvironmentInspector:
 
             if sel_exp:
                 props.append(PropertyRow("trn_head_run", "--- RUN ---", "label", ""))
-                props.append(PropertyRow("trn_launch", "Launch Training", "action", "LAUNCH PPO"))
+                algo = (data.get("selected_algorithm") or "ppo").upper()
+                props.append(PropertyRow("trn_launch", "Launch Training", "action",
+                                         f"LAUNCH {algo}"))
+                props.append(PropertyRow("trn_batch", "Batch x2 Seeds", "action", "RUN BATCH"))
                 run_status = sel_run.get("status", "")
                 if run_status in ("RUNNING", "PAUSED", "STARTING", "QUEUED"):
                     props.append(PropertyRow("trn_cancel", "Cancel Run", "action", "CANCEL"))
@@ -274,6 +277,7 @@ class EnvironmentInspector:
                     props.append(PropertyRow("trn_resume", "Resume From Checkpoint", "action", "RESUME"))
                     props.append(PropertyRow("trn_eval", "Evaluate Checkpoint", "action", "EVALUATE"))
                 props.append(PropertyRow("trn_repro", "Reproducibility Check", "action", "VERIFY"))
+                props.append(PropertyRow("trn_dataset", "Export Dataset", "action", "EXPORT DATASET"))
                 props.append(PropertyRow("trn_export", "Export Experiment", "action", "EXPORT"))
 
                 if sel_run:
@@ -281,6 +285,14 @@ class EnvironmentInspector:
                     props.append(PropertyRow("trn_status", "Status", "label", run_status or "no runs"))
                     props.append(PropertyRow("trn_steps", "Timesteps", "label", str(sel_run.get("current_timestep", 0))))
                     props.append(PropertyRow("trn_eps", "Episodes", "label", str(sel_run.get("episode_count", 0))))
+                    curr = sel_run.get("curriculum")
+                    if curr:
+                        props.append(PropertyRow("trn_curr", "Curriculum Stage",
+                                                 "label",
+                                                 f"{curr.get('stage_index')}: {curr.get('stage_name')}"))
+                        props.append(PropertyRow("trn_curr_eps", "Stage Episodes",
+                                                 "label",
+                                                 str(curr.get("episodes_in_stage", 0))))
                     for k, v in list(sel_run.get("latest_metrics", {}).items())[:6]:
                         props.append(PropertyRow(f"trn_m_{k}", k, "label",
                                                  f"{v:.3f}" if isinstance(v, (int, float)) else str(v)[:16]))
@@ -290,6 +302,35 @@ class EnvironmentInspector:
                     if sel_run.get("error"):
                         props.append(PropertyRow("trn_err", "Error", "label",
                                                  str(sel_run["error"].get("message", ""))[:28]))
+
+            batch = data.get("batch_status")
+            if batch:
+                props.append(PropertyRow("trn_head_batch", "--- BATCH ---", "label", ""))
+                props.append(PropertyRow("trn_batch_id", "Batch", "label",
+                                         batch.get("batch_id", "")[:24]))
+                props.append(PropertyRow("trn_batch_prog", "Progress", "label",
+                                         f"{batch.get('finished',0)}/{batch.get('total',0)} "
+                                         f"run={batch.get('running',0)} "
+                                         f"ok={batch.get('completed',0)} "
+                                         f"fail={batch.get('failed',0)}"))
+                props.append(PropertyRow("trn_batch_cancel", "Cancel Batch", "action", "CANCEL BATCH"))
+
+            ds = data.get("dataset_report")
+            if ds:
+                props.append(PropertyRow("trn_head_ds", "--- DATASET ---", "label", ""))
+                props.append(PropertyRow("trn_ds_eps", "Episodes", "label", str(ds.get("episodes", 0))))
+                props.append(PropertyRow("trn_ds_steps", "Steps", "label", str(ds.get("steps", 0))))
+                props.append(PropertyRow("trn_ds_skip", "Skipped", "label",
+                                         str(sum(ds.get("skipped", {}).values()))))
+
+            cmp_data = data.get("comparison")
+            if cmp_data and cmp_data.get("series"):
+                props.append(PropertyRow("trn_head_cmp", "--- COMPARISON (reward) ---", "label", ""))
+                for i, s in enumerate(cmp_data["series"][:4]):
+                    props.append(PropertyRow(f"trn_cmp_{i}", s["label"][:20], "label",
+                                             f"mean={s['mean']:.1f} best={s['max']:.1f}"))
+            if sel_exp:
+                props.append(PropertyRow("trn_compare", "Compare Runs", "action", "COMPARE"))
 
         # 9. SCENE HIERARCHY
         elif self.active_tab == "SCENE":
