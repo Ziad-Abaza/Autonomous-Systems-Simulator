@@ -27,9 +27,12 @@ from sim_ui.widgets import (
 )
 from sim_ui.screens import dialogs
 from sim_ui.screens.datasets_panel import draw_datasets_browser
+from sim_ui.screens.dynamics_panel import (
+    draw_dynamics_panel, handle_dynamics_action,
+)
 
 
-TABS = ["EDIT", "SIMULATE", "REPLAY", "DATA"]
+TABS = ["EDIT", "SIMULATE", "REPLAY", "DATA", "DYNAMICS"]
 
 
 class WorkspaceScreen:
@@ -57,6 +60,9 @@ class WorkspaceScreen:
             self._draw_replay(ctx, body)
         elif app.ws_tab == "DATA":
             draw_datasets_browser(ctx, body, app)
+            self._draw_statusbar(ctx, body)
+        elif app.ws_tab == "DYNAMICS":
+            draw_dynamics_panel(ctx, body, app)
             self._draw_statusbar(ctx, body)
 
         # modal dialogs
@@ -164,9 +170,13 @@ class WorkspaceScreen:
             ctx.surface, w - 315, 55,
             app.step_info.get("reward_breakdown", {}),
             app.env.reward_engine.total_accumulated_reward, fonts)
-        cam_sensor = app.env.sensors.get_sensor("rgb_camera")
-        if cam_sensor:
-            hud.draw_camera_pip(ctx.surface, w - 315, 345, cam_sensor, fonts)
+        # Camera PiP — every enabled camera sensor gets a stacked preview
+        cam_y = 345
+        for name, s in app.env.sensors.sensors.items():
+            if getattr(s, "sensor_type", "") != "camera_rgb":
+                continue
+            hud.draw_camera_pip(ctx.surface, w - 315, cam_y, s, fonts)
+            cam_y += 120
         if hud.show_obs_inspector:
             hud.draw_observation_inspector(
                 ctx.surface, (w - 620) // 2, (h - 360) // 2,
@@ -204,7 +214,8 @@ class WorkspaceScreen:
                    x, r.centery - 7)
         hint = {"SIMULATE": "WASD drive · R reset · C camera · TAB inspect",
                 "REPLAY": "Space play · arrows scrub · C camera",
-                "DATA": "Datasets & episode recordings"}.get(app.ws_tab, "")
+                "DATA": "Datasets & episode recordings",
+                "DYNAMICS": "Select maneuver · run · compare · export"}.get(app.ws_tab, "")
         _draw_text(ctx, ctx.fonts.caption, hint, T.C.text_faint,
                    r.right - ctx.fonts.caption.size(hint)[0] - 10,
                    r.centery - 6)
@@ -390,6 +401,8 @@ class WorkspaceScreen:
         elif action == "rp_close":
             app.replay_player.frames = []
             app.replay_player.metadata = {}
+        elif action.startswith("dyn_"):
+            return handle_dynamics_action(app, action, payload)
         elif action == "ds_select":
             app.dataset_detail = payload
         elif action == "ds_open_folder":

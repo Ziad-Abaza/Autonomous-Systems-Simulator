@@ -19,7 +19,9 @@ class VehicleState:
         'steering_angle', 'throttle', 'brake',
         'accel_body', 'accel_world',
         'wheel_angles', 'wheel_speeds',
-        'is_colliding'
+        'is_colliding',
+        'alpha_f', 'alpha_r', 'fy_f', 'fy_r',
+        'fx_f', 'fx_r', 'fz_front', 'fz_rear'
     )
 
     def __init__(self):
@@ -48,6 +50,17 @@ class VehicleState:
 
         self.is_colliding: bool = False
 
+        # Per-step tire diagnostics (validation/telemetry only — not part of
+        # any RL observation schema)
+        self.alpha_f: float = 0.0     # front axle slip angle (rad)
+        self.alpha_r: float = 0.0     # rear axle slip angle (rad)
+        self.fy_f: float = 0.0        # front axle lateral force (N)
+        self.fy_r: float = 0.0        # rear axle lateral force (N)
+        self.fx_f: float = 0.0        # front axle longitudinal tire force (N)
+        self.fx_r: float = 0.0        # rear axle longitudinal tire force (N)
+        self.fz_front: float = 0.0    # front axle normal load (N)
+        self.fz_rear: float = 0.0     # rear axle normal load (N)
+
     @property
     def speed(self) -> float:
         """Longitudinal forward speed (m/s)."""
@@ -75,8 +88,9 @@ class VehicleModel:
         self.a = cfg.wheelbase * (1.0 - cfg.weight_dist_front)  # COG to front axle
         self.b = cfg.wheelbase * cfg.weight_dist_front          # COG to rear axle
         # Yaw moment of inertia Iz ~ m * (a * b)
-        self.Iz = cfg.mass * (self.a * self.b)
-        self.wheel_radius = 0.34  # meters
+        # Yaw inertia: explicit override wins, else uniform-mass estimate m*a*b
+        self.Iz = cfg.yaw_inertia if cfg.yaw_inertia > 0.0 else cfg.mass * (self.a * self.b)
+        self.wheel_radius = cfg.wheel_radius
 
     def reset(self, pos: Vec3, yaw: float, initial_speed: float = 0.0) -> None:
         """Resets vehicle to a given pose and speed."""
@@ -94,98 +108,137 @@ class VehicleModel:
             steering_cmd: [-1.0, 1.0] (negative = left, positive = right)
             throttle_cmd: [0.0, 1.0]
             brake_cmd:    [0.0, 1.0]
+
+        Internally integrates at `physics_substeps` per call so results are
+        stable and nearly independent of the caller's dt.
         """
         cfg = self.config
         st = self.state
 
-        # 1. Steering rate limiting
-        # Convention: steering_cmd in [-1.0, 1.0] where negative = left, positive = right.
-        # In counter-clockwise Cartesian coordinates, turning left corresponds to positive steer/yaw.
+        # Control inputs are held constant across the substeps of one call.
+        # Convention: steering_cmd negative = left. In CCW-positive Cartesian
+        # coordinates a left turn is positive wheel angle / yaw rate.
         target_steer = -clamp(steering_cmd, -1.0, 1.0) * cfg.max_steering_angle
-        steer_diff = target_steer - st.steering_angle
-        max_delta = cfg.steering_rate * dt
-        st.steering_angle += clamp(steer_diff, -max_delta, max_delta)
-
-        # 2. Input clamp
         st.throttle = clamp(throttle_cmd, 0.0, 1.0)
         st.brake = clamp(brake_cmd, 0.0, 1.0)
+
+        n_sub = max(1, int(cfg.physics_substeps))
+        h = dt / n_sub
+        for _ in range(n_sub):
+            self._substep(target_steer, h, surface_friction)
+
+        # Wheel visualization angles and rotation (non-physical bookkeeping)
+        st.wheel_angles[0] = st.steering_angle  # FL
+        st.wheel_angles[1] = st.steering_angle  # FR
+        st.wheel_angles[2] = 0.0                # RL
+        st.wheel_angles[3] = 0.0                # RR
+        spin_rate = st.vel_body.x / self.wheel_radius
+        for i in range(4):
+            st.wheel_speeds[i] = (st.wheel_speeds[i] + spin_rate * dt) % (2.0 * math.pi)
+
+    def _substep(self, target_steer: float, h: float, surface_friction: float) -> None:
+        """Integrates the single-track model by one substep h."""
+        cfg = self.config
+        st = self.state
+        g = 9.81
+
+        # 1. Steering rate limiting (road-wheel angle, rad)
+        steer_diff = target_steer - st.steering_angle
+        max_delta = cfg.steering_rate * h
+        st.steering_angle += clamp(steer_diff, -max_delta, max_delta)
 
         vx = st.vel_body.x
         vy = st.vel_body.y
         wz = st.yaw_rate
 
-        # 3. Longitudinal powertrain and resistance forces
-        # Drive force
+        # 2. Longitudinal tire forces (per axle) + free-body losses.
+        #    Drive/brake forces act at the tire contact patches and consume
+        #    friction budget; drag/rolling resistance act on the body.
         speed_factor = max(0.0, 1.0 - (vx / max(1.0, cfg.top_speed)))
         f_drive = st.throttle * cfg.max_drive_force * speed_factor
 
-        # Braking force opposing motion
         f_brake = 0.0
         if st.brake > 0.0:
             if abs(vx) > 0.05:
                 f_brake = st.brake * cfg.max_brake_force * (1.0 if vx > 0 else -1.0)
             else:
-                f_brake = 0.0
                 vx = 0.0
 
-        # Aerodynamic drag: 0.5 * rho * Cd * A * vx^2
         f_drag = 0.5 * cfg.air_density * cfg.drag_coeff * cfg.frontal_area * vx * abs(vx)
-
-        # Rolling resistance
-        g = 9.81
         f_roll = cfg.rolling_resistance * cfg.mass * g * (1.0 if vx > 0.05 else (-1.0 if vx < -0.05 else 0.0))
 
-        # Total net longitudinal force
-        f_long = f_drive - f_brake - f_drag - f_roll
+        # Per-axle longitudinal tire force (positive = forward on vehicle)
+        fx_f = f_drive * cfg.drive_force_front_fraction - f_brake * cfg.brake_bias_front
+        fx_r = f_drive * (1.0 - cfg.drive_force_front_fraction) - f_brake * (1.0 - cfg.brake_bias_front)
 
-        # 4. Low-speed vs High-speed Lateral Dynamics
-        # At very low speeds (< 1.5 m/s), dynamic tire slip models have 1/vx singularity.
-        # We blend smoothly between kinematic bicycle model and dynamic tire-slip model.
-        kinematic_blend = clamp((1.5 - abs(vx)) / 1.5, 0.0, 1.0) if abs(vx) < 1.5 else 0.0
-
+        # 3. Normal loads: static + longitudinal load transfer from CG height.
+        #    accel_body stores proper acceleration (specific force, Sigma_F/m)
+        #    which is exactly the quantity that transfers load — no Coriolis
+        #    correction needed.
+        #    Lateral transfer is omitted: this single-track model aggregates
+        #    each axle to one tire force, so it would not change axle sums.
         mu = cfg.tire_friction * surface_friction
-        fz_front = cfg.mass * g * (self.b / cfg.wheelbase)
-        fz_rear = cfg.mass * g * (self.a / cfg.wheelbase)
+        fz_f_static = cfg.mass * g * (self.b / cfg.wheelbase)
+        fz_r_static = cfg.mass * g * (self.a / cfg.wheelbase)
+        transfer = cfg.mass * st.accel_body.x * cfg.cog_height / cfg.wheelbase
+        transfer = clamp(transfer, -0.9 * fz_r_static, 0.9 * fz_f_static)
+        fz_front = fz_f_static - transfer   # braking (ax<0) loads the front
+        fz_rear = fz_r_static + transfer
+
+        # 4. Tire model: saturating-tanh lateral force with per-axle
+        #    friction-ellipse coupling. Longitudinal demand consumes grip
+        #    first; remaining grip sqrt(1-u^2)*muFz bounds lateral force.
+        vx_eff = vx if abs(vx) >= 0.5 else (0.5 if vx >= 0.0 else -0.5)
+        alpha_f = math.atan2(vy + self.a * wz, vx_eff) - st.steering_angle
+        alpha_r = math.atan2(vy - self.b * wz, vx_eff)
+
+        cap_f = mu * fz_front
+        cap_r = mu * fz_rear
+        # Clamp longitudinal tire force to available friction
+        u_f = clamp(fx_f / max(1.0, cap_f), -1.0, 1.0)
+        u_r = clamp(fx_r / max(1.0, cap_r), -1.0, 1.0)
+        fx_f = u_f * cap_f
+        fx_r = u_r * cap_r
+        lat_cap_f = cap_f * math.sqrt(max(0.0, 1.0 - u_f * u_f))
+        lat_cap_r = cap_r * math.sqrt(max(0.0, 1.0 - u_r * u_r))
+
+        low_thr = cfg.low_speed_threshold
+        kinematic_blend = clamp((low_thr - abs(vx)) / low_thr, 0.0, 1.0) if abs(vx) < low_thr else 0.0
 
         if kinematic_blend < 0.99:
-            # Dynamic slip model
-            # Slip angles:
-            alpha_f = math.atan2(vy + self.a * wz, max(0.5, abs(vx))) - st.steering_angle
-            alpha_r = math.atan2(vy - self.b * wz, max(0.5, abs(vx)))
+            fy_f = -lat_cap_f * math.tanh(cfg.cornering_stiffness_front * alpha_f / max(1.0, cap_f))
+            fy_r = -lat_cap_r * math.tanh(cfg.cornering_stiffness_rear * alpha_r / max(1.0, cap_r))
 
-            # Nonlinear brush/hyperbolic tire lateral forces
-            fy_f = -mu * fz_front * math.tanh((cfg.cornering_stiffness_front * alpha_f) / max(1.0, mu * fz_front))
-            fy_r = -mu * fz_rear * math.tanh((cfg.cornering_stiffness_rear * alpha_r) / max(1.0, mu * fz_rear))
-
-            # Dynamic accelerations
-            ax_dyn = (f_long - fy_f * math.sin(st.steering_angle)) / cfg.mass + vy * wz
+            f_x_total = fx_f + fx_r - f_drag - f_roll
+            ax_dyn = (f_x_total - fy_f * math.sin(st.steering_angle)) / cfg.mass + vy * wz
             ay_dyn = (fy_f * math.cos(st.steering_angle) + fy_r) / cfg.mass - vx * wz
             alpha_z_dyn = (self.a * fy_f * math.cos(st.steering_angle) - self.b * fy_r) / self.Iz
         else:
-            ax_dyn = f_long / cfg.mass
+            fy_f = fy_r = 0.0
+            ax_dyn = (fx_f + fx_r - f_drag - f_roll) / cfg.mass
             ay_dyn = 0.0
             alpha_z_dyn = 0.0
 
         if kinematic_blend > 0.01:
-            # Kinematic bicycle model at low speeds
-            # wz_kin = vx * tan(delta) / L
+            # Low-speed regularization: blend toward kinematic bicycle model.
+            # The yaw-rate term is a bounded relaxation (time constant tau),
+            # not deadbeat forcing.
             wz_kin = vx * math.tan(st.steering_angle) / cfg.wheelbase
-            ay_kin = 0.0
-            ax_kin = f_long / cfg.mass
-
-            # Blend
+            f_x_total = fx_f + fx_r - f_drag - f_roll
+            ax_kin = f_x_total / cfg.mass
             ax = (1.0 - kinematic_blend) * ax_dyn + kinematic_blend * ax_kin
-            ay = (1.0 - kinematic_blend) * ay_dyn + kinematic_blend * ay_kin
-            alpha_z = (1.0 - kinematic_blend) * alpha_z_dyn + kinematic_blend * ((wz_kin - wz) / max(0.01, dt))
+            ay = (1.0 - kinematic_blend) * ay_dyn
+            relax = (wz_kin - wz) / max(cfg.low_speed_relax_tau, h)
+            alpha_z = (1.0 - kinematic_blend) * alpha_z_dyn + kinematic_blend * relax
         else:
             ax = ax_dyn
             ay = ay_dyn
             alpha_z = alpha_z_dyn
 
-        # 5. Numerical integration (Semi-implicit Euler)
-        vx += ax * dt
-        vy += ay * dt
-        wz += alpha_z * dt
+        # 5. Integration (explicit Euler at substep rate)
+        vx += ax * h
+        vy += ay * h
+        wz += alpha_z * h
 
         # Prevent creep when stopped with brake
         if st.brake > 0.1 and abs(vx) < 0.1:
@@ -195,33 +248,35 @@ class VehicleModel:
 
         st.vel_body = Vec2(vx, vy)
         st.yaw_rate = wz
-        st.accel_body = Vec2(ax, ay)
+        # accel_body is PROPER acceleration (specific force Sigma_F/m), i.e.
+        # what an accelerometer measures — d(vx,vy)/dt with the frame-rotation
+        # terms removed. In steady cornering it correctly reads centripetal
+        # acceleration instead of decaying to zero.
+        proper_ax = ax - vy * wz
+        proper_ay = ay + vx * wz
+        st.accel_body = Vec2(proper_ax, proper_ay)
 
-        # 6. World-frame position update
-        st.yaw = normalize_angle(st.yaw + wz * dt)
+        # 6. World-frame pose update
+        st.yaw = normalize_angle(st.yaw + wz * h)
         cos_yaw = math.cos(st.yaw)
         sin_yaw = math.sin(st.yaw)
-
-        # World velocity = Rotation(yaw) * Body velocity
         vx_world = cos_yaw * vx - sin_yaw * vy
         vy_world = sin_yaw * vx + cos_yaw * vy
         st.vel_world = Vec2(vx_world, vy_world)
+        st.pos.x += vx_world * h
+        st.pos.y += vy_world * h
+        st.accel_world = Vec2(cos_yaw * proper_ax - sin_yaw * proper_ay,
+                              sin_yaw * proper_ax + cos_yaw * proper_ay)
 
-        st.pos.x += vx_world * dt
-        st.pos.y += vy_world * dt
-
-        # World acceleration
-        st.accel_world = Vec2(cos_yaw * ax - sin_yaw * ay, sin_yaw * ax + cos_yaw * ay)
-
-        # 7. Wheels visualization angles and rotation
-        st.wheel_angles[0] = st.steering_angle  # FL
-        st.wheel_angles[1] = st.steering_angle  # FR
-        st.wheel_angles[2] = 0.0                # RL
-        st.wheel_angles[3] = 0.0                # RR
-
-        spin_rate = vx / self.wheel_radius
-        for i in range(4):
-            st.wheel_speeds[i] = (st.wheel_speeds[i] + spin_rate * dt) % (2.0 * math.pi)
+        # 7. Diagnostics (last substep state — telemetry/validation only)
+        st.alpha_f = alpha_f
+        st.alpha_r = alpha_r
+        st.fy_f = fy_f
+        st.fy_r = fy_r
+        st.fx_f = fx_f
+        st.fx_r = fx_r
+        st.fz_front = fz_front
+        st.fz_rear = fz_rear
 
     def get_obb(self) -> OBB2D:
         """Returns the oriented bounding box of the vehicle in 2D."""
