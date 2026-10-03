@@ -63,9 +63,12 @@ class SimulationStudioApp:
         self.is_running = True
 
         # Studio settings + asset libraries (Phase 7).
-        # Settings live inside the organized data dir (<repo>/data/),
-        # not loose at the repo root; a legacy root file is migrated.
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Settings live inside the organized data dir (<root>/data/),
+        # not loose at the root; a legacy root file is migrated.
+        # resource_root: bundled read-only assets (_MEIPASS when frozen);
+        # runtime_root: writable dirs (exe dir when frozen).
+        from sim_project.paths import resource_root, runtime_root
+        repo_root = runtime_root()
         settings_path = os.path.join(repo_root, "data", "studio_settings.json")
         legacy_settings = os.path.join(repo_root, "studio_settings.json")
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
@@ -79,7 +82,7 @@ class SimulationStudioApp:
         import sim_ui.theme as _theme
         _theme.set_theme(self.settings.theme)
         self.library = TrackLibrary(os.path.join(repo_root, "tracks"))
-        self.presets_lib = TrackLibrary(os.path.join(repo_root, "presets"),
+        self.presets_lib = TrackLibrary(os.path.join(resource_root(), "presets"),
                                         readonly=True)
         self.record_dir = self.settings.recordings_dir()
 
@@ -514,9 +517,15 @@ class SimulationStudioApp:
                     env = build_env_from_dicts(manifest.environment,
                                                manifest.scenario_configuration,
                                                seed=manifest.random_seed)
-                    policy = make_policy_from_checkpoint(
-                        os.path.join(rd, ckpt["path"]),
-                        algorithm=manifest.training.algorithm)
+                    try:
+                        policy = make_policy_from_checkpoint(
+                            os.path.join(rd, ckpt["path"]),
+                            algorithm=manifest.training.algorithm)
+                    except ImportError as e:
+                        self._status(
+                            f"Run evaluation unavailable ({e.name} not "
+                            "installed in this build)", "warn")
+                        return
                     result = evaluate_policy(
                         env, policy,
                         seeds=manifest.evaluation.eval_seeds,
@@ -1180,7 +1189,9 @@ class SimulationStudioApp:
                 pygame.display.flip()
                 self.clock.tick(60)
             else:
-                # Headless loop
+                # Headless loop: external TCP steps still advance
+                # env.current_step — recording must capture them here too.
+                self._record_step_if_needed()
                 time.sleep(0.005)
 
         self.cleanup()
@@ -1376,6 +1387,11 @@ class SimulationStudioApp:
         self.ui_renderer.render_to_screen()
 
     def cleanup(self) -> None:
+        if getattr(self, "recorder", None) is not None and self.recorder.is_recording:
+            try:
+                self.stop_recording()
+            except Exception as e:
+                print(f"[Studio] Could not flush recording on shutdown: {e}")
         self.server.stop()
         if not self.headless:
             pygame.quit()

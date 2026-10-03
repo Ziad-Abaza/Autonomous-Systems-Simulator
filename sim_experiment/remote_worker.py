@@ -41,6 +41,7 @@ class WorkerService:
         if not token:
             raise ValueError("WorkerService requires a non-empty shared token")
         self.host = host
+        self._port = port
         self._token = token
         self.worker_id = f"worker_{uuid.uuid4().hex[:12]}"
         self.orch = LocalTrainingOrchestrator(experiments_root=experiments_root)
@@ -55,7 +56,7 @@ class WorkerService:
     def start(self) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((self.host, 0))
+        self._sock.bind((self.host, self._port))
         self._sock.listen(8)
         self._sock.setblocking(False)
         self._running = True

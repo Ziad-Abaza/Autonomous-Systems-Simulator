@@ -80,6 +80,23 @@ def _mutator(cfg: dict, seed: int) -> ScenarioMutator | None:
     return ScenarioMutator(seed=seed, **kwargs)
 
 
+def _seed_demos(cfg: dict, env, agent, mutator) -> int:
+    """Warmstart an off-policy replay buffer with PD-controller demos.
+
+    SAC+D-style: seeds the value landscape with positive-progress
+    transitions. No-op for on-policy agents or configs without "demos".
+    """
+    d = cfg.get("demos")
+    if not d or getattr(agent, "is_on_policy", False) \
+            or getattr(agent, "memory", None) is None:
+        return 0
+    from agentRL.baselines.pd_driver import collect_demos
+    return collect_demos(env, agent.adapter, agent.memory, agent.encoder,
+                         n_steps=int(d.get("steps", 15_000)),
+                         vmax=float(d.get("vmax", 14.0)),
+                         mutator=mutator)
+
+
 def run_experiment(exp_id: str, run_dir: str | None = None,
                    steps_override: int | None = None,
                    eval_episodes: int | None = None,
@@ -92,6 +109,7 @@ def run_experiment(exp_id: str, run_dir: str | None = None,
     factory = EnvFactory(
         reward=cfg.get("reward", "drive_v1"),
         termination=cfg.get("termination", "term_v1"),
+        initial_speed=cfg.get("initial_speed"),
         obs_spec=ObservationSpec(
             channel_names=PRESETS[cfg.get("obs_preset", "full23")],
             frame_stack=int(cfg.get("frame_stack", 1)),
@@ -115,11 +133,13 @@ def run_experiment(exp_id: str, run_dir: str | None = None,
         if kind == "single":
             trainer = make_trainer(factory, reg.load(cfg["track"]),
                                    agent, tc, mutator=mutator)
+            _seed_demos(cfg, trainer.env, agent, mutator)
             results[algo] = trainer.train()
         elif kind == "mixed":
             tracks = [reg.load(t) for t in cfg["tracks"]]
             trainer = MixedTrackTrainer(factory, tracks, agent, tc,
                                         mutator=mutator)
+            _seed_demos(cfg, trainer.env, agent, mutator)
             results[algo] = trainer.train()
         elif kind == "continual":
             ct = ContinualTrainer(

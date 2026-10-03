@@ -188,9 +188,15 @@ class LocalTrainingOrchestrator:
 
         stdout_log = open(os.path.join(rd, "logs", "stdout.log"), "w", encoding="utf-8")
         stderr_log = open(os.path.join(rd, "logs", "stderr.log"), "w", encoding="utf-8")
+        # Frozen builds can't use `python -m` — the exe re-invokes itself
+        # through main.py's `--module` passthrough.
+        if getattr(sys, "frozen", False):
+            cmd = [self.python_exe, "--module", module, "--run-dir", rd]
+        else:
+            cmd = [self.python_exe, "-m", module, "--run-dir", rd]
         try:
             proc = subprocess.Popen(
-                [self.python_exe, "-m", module, "--run-dir", rd],
+                cmd,
                 cwd=self.repo_root,
                 stdout=stdout_log,
                 stderr=stderr_log,

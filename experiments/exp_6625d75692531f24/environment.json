@@ -1,0 +1,889 @@
+{
+  "schema_version": "2.0.0",
+  "environment_version": "1.0.0",
+  "name": "Proving Ground Oval",
+  "road_definition": {
+    "name": "Proving Ground Circuit",
+    "is_closed": true,
+    "control_points": [
+      {
+        "x": 65.0,
+        "y": 0.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": 45.5,
+        "y": 32.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": 0.0,
+        "y": 40.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": -45.5,
+        "y": 32.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": -65.0,
+        "y": 0.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": -45.5,
+        "y": -32.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": 0.0,
+        "y": -40.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      },
+      {
+        "x": 45.5,
+        "y": -32.0,
+        "z": 0.0,
+        "width": 12.0,
+        "banking": 0.0,
+        "friction": 1.0
+      }
+    ],
+    "boundary_config": {
+      "left_type": "guardrail",
+      "right_type": "guardrail",
+      "wall_height": 0.8,
+      "curb_width": 0.5,
+      "curb_height": 0.15,
+      "has_curbs": true,
+      "has_lane_markings": true
+    },
+    "spawn_point": {
+      "x": 65.0,
+      "y": 0.0,
+      "z": 0.1,
+      "yaw": 1.5707963267948966,
+      "initial_speed": 0.0
+    },
+    "num_checkpoints": 16,
+    "default_friction": 1.0
+  },
+  "vehicle_config": {
+    "mass": 1200.0,
+    "length": 4.2,
+    "width": 1.8,
+    "height": 1.4,
+    "wheelbase": 2.6,
+    "track_width": 1.5,
+    "cog_height": 0.45,
+    "weight_dist_front": 0.52,
+    "wheel_radius": 0.34,
+    "yaw_inertia": 0.0,
+    "max_steering_angle": 0.58,
+    "steering_rate": 4.5,
+    "max_drive_force": 6500.0,
+    "max_brake_force": 9000.0,
+    "top_speed": 45.0,
+    "reverse_max_speed": 10.0,
+    "drive_force_front_fraction": 0.0,
+    "brake_bias_front": 0.65,
+    "drag_coeff": 0.32,
+    "frontal_area": 2.1,
+    "air_density": 1.225,
+    "rolling_resistance": 0.015,
+    "tire_friction": 1.0,
+    "cornering_stiffness_front": 14000.0,
+    "cornering_stiffness_rear": 16000.0,
+    "physics_substeps": 4,
+    "low_speed_threshold": 1.5,
+    "low_speed_relax_tau": 0.05
+  },
+  "action_config": {
+    "type": "continuous",
+    "continuous_low": [
+      -1.0,
+      0.0,
+      0.0
+    ],
+    "continuous_high": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "discrete_actions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.7,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.8
+      ],
+      [
+        -0.6,
+        0.4,
+        0.0
+      ],
+      [
+        0.6,
+        0.4,
+        0.0
+      ]
+    ]
+  },
+  "observation_schema": {
+    "include_speed": true,
+    "include_velocity": true,
+    "include_yaw_rate": true,
+    "include_steering_angle": true,
+    "include_distance_from_center": true,
+    "include_heading_error": true,
+    "include_distance_to_checkpoint": true,
+    "include_lidar_rays": true,
+    "include_camera_rgb": false,
+    "flatten_vector": true
+  },
+  "reward_config": {
+    "weight_progress": 1.0,
+    "weight_centering": 0.5,
+    "weight_speed": 0.2,
+    "target_speed": 20.0,
+    "weight_heading": 0.3,
+    "weight_action_smoothness": 0.05,
+    "motion_gate_ms": 5.0,
+    "checkpoint_bonus": 10.0,
+    "lap_completion_bonus": 100.0,
+    "collision_penalty": 50.0,
+    "off_road_penalty": 25.0,
+    "backward_penalty": 1.0
+  },
+  "termination_config": {
+    "terminate_on_collision": true,
+    "terminate_on_off_road": true,
+    "terminate_on_wrong_direction": true,
+    "wrong_direction_max_angle_deg": 120.0,
+    "terminate_on_lap_completion": false,
+    "laps_to_complete": 1,
+    "max_episode_steps": 1500,
+    "max_seconds_without_checkpoint": 20.0
+  },
+  "randomization_config": {
+    "enabled": false,
+    "mass_range": [
+      0.85,
+      1.15
+    ],
+    "tire_friction_range": [
+      0.8,
+      1.2
+    ],
+    "surface_friction_range": [
+      0.75,
+      1.1
+    ],
+    "sensor_noise_multiplier_range": [
+      0.5,
+      2.0
+    ],
+    "spawn_lateral_jitter_m": 1.0,
+    "spawn_heading_jitter_deg": 10.0
+  },
+  "scenario_config": {
+    "name": "Standard Day",
+    "time_of_day": "day",
+    "weather": "clear",
+    "ambient_light": 1.0,
+    "surface_friction_mult": 1.0,
+    "obstacles": [],
+    "difficulty_level": 1
+  },
+  "entities": [],
+  "agent": {
+    "agent_id": "vehicle_agent_01",
+    "name": "Autonomous Racing Vehicle",
+    "entity_type": "vehicle",
+    "entity_id": "vehicle_01",
+    "sensor_configs": [
+      {
+        "name": "vehicle_state",
+        "sensor_type": "vehicle_state",
+        "enabled": true,
+        "params": {
+          "update_frequency_hz": 60.0,
+          "noise_std": 0.0,
+          "latency_seconds": 0.0
+        }
+      },
+      {
+        "name": "lidar_rays",
+        "sensor_type": "lidar_rays",
+        "enabled": true,
+        "params": {
+          "num_rays": 15,
+          "fov_degrees": 180.0,
+          "max_range": 40.0,
+          "update_frequency_hz": 30.0,
+          "local_pos": [
+            0.0,
+            0.0,
+            1.2
+          ],
+          "local_yaw": 0.0,
+          "noise_std": 0.0,
+          "latency_seconds": 0.0
+        }
+      },
+      {
+        "name": "rgb_camera",
+        "sensor_type": "camera_rgb",
+        "enabled": true,
+        "params": {
+          "width": 84,
+          "height": 84,
+          "fov_degrees": 75.0,
+          "update_frequency_hz": 30.0,
+          "local_pos": [
+            1.0,
+            0.0,
+            1.1
+          ],
+          "local_yaw": 0.0,
+          "local_pitch": -0.05,
+          "noise_std": 0.0,
+          "latency_seconds": 0.0
+        }
+      },
+      {
+        "name": "imu",
+        "sensor_type": "imu",
+        "enabled": true,
+        "params": {
+          "update_frequency_hz": 100.0,
+          "accel_noise_std": 0.05,
+          "gyro_noise_std": 0.01,
+          "bias_drift_rate": 0.001,
+          "local_pos": [
+            0.0,
+            0.0,
+            0.5
+          ]
+        }
+      }
+    ],
+    "sensor_names": [
+      "vehicle_state",
+      "lidar_rays",
+      "rgb_camera",
+      "imu"
+    ],
+    "observation_space": {
+      "channels": [
+        {
+          "name": "speed",
+          "channel_type": "scalar",
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "range_low": [
+            0.0
+          ],
+          "range_high": [
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale": 45.0
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "speed",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Longitudinal forward speed normalized by 45 m/s"
+        },
+        {
+          "name": "velocity_body",
+          "channel_type": "vector",
+          "shape": [
+            2
+          ],
+          "dtype": "float32",
+          "range_low": [
+            -1.0,
+            -1.0
+          ],
+          "range_high": [
+            1.0,
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale_x": 45.0,
+            "scale_y": 10.0
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "vel_body",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Body-frame velocities (vx / 45, vy / 10)"
+        },
+        {
+          "name": "yaw_rate",
+          "channel_type": "scalar",
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "range_low": [
+            -1.0
+          ],
+          "range_high": [
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale": 3.0
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "yaw_rate",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Angular yaw velocity normalized by 3.0 rad/s"
+        },
+        {
+          "name": "steering_angle",
+          "channel_type": "scalar",
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "range_low": [
+            -1.0
+          ],
+          "range_high": [
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale": 0.6
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "steering_angle",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Current front road wheel angle normalized by max steer (0.6 rad)"
+        },
+        {
+          "name": "distance_from_center",
+          "channel_type": "scalar",
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "range_low": [
+            -1.0
+          ],
+          "range_high": [
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale_half_width": 1.0
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "distance_from_center",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Lateral deviation from track centerline normalized to half road width"
+        },
+        {
+          "name": "heading_error",
+          "channel_type": "scalar",
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "range_low": [
+            -1.0
+          ],
+          "range_high": [
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale": 3.141592653589793
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "heading_error",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Angle between vehicle heading and track centerline tangent normalized by pi"
+        },
+        {
+          "name": "distance_to_checkpoint",
+          "channel_type": "scalar",
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "range_low": [
+            0.0
+          ],
+          "range_high": [
+            1.0
+          ],
+          "normalization": "scale",
+          "norm_params": {
+            "scale": 100.0
+          },
+          "source_sensor": "vehicle_state",
+          "source_key": "distance_to_checkpoint",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "Euclidean distance to next checkpoint gate capped at 100 m"
+        },
+        {
+          "name": "lidar_ranges",
+          "channel_type": "vector",
+          "shape": [
+            15
+          ],
+          "dtype": "float32",
+          "range_low": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "range_high": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "normalization": "none",
+          "norm_params": {},
+          "source_sensor": "lidar_rays",
+          "source_key": "ranges_norm",
+          "category": "agent_observation",
+          "enabled": true,
+          "description": "15 normalized planar LiDAR range measurements [0: impact, 1: clear]"
+        }
+      ],
+      "flatten_vector": true,
+      "include_image_channel": false,
+      "image_channels": []
+    },
+    "action_space": {
+      "space_type": "continuous",
+      "channels": [
+        {
+          "name": "steering",
+          "channel_type": "continuous",
+          "min_val": -1.0,
+          "max_val": 1.0,
+          "default_val": 0.0,
+          "scaling": 1.0,
+          "dead_zone": 0.02,
+          "rate_limit": 4.0,
+          "description": "Normalized steering command [-1: full left, +1: full right]"
+        },
+        {
+          "name": "throttle",
+          "channel_type": "continuous",
+          "min_val": 0.0,
+          "max_val": 1.0,
+          "default_val": 0.0,
+          "scaling": 1.0,
+          "dead_zone": 0.01,
+          "rate_limit": 5.0,
+          "description": "Forward throttle command [0: idle, 1: full drive force]"
+        },
+        {
+          "name": "brake",
+          "channel_type": "continuous",
+          "min_val": 0.0,
+          "max_val": 1.0,
+          "default_val": 0.0,
+          "scaling": 1.0,
+          "dead_zone": 0.01,
+          "rate_limit": 6.0,
+          "description": "Braking force command [0: released, 1: full brake]"
+        }
+      ],
+      "discrete_options": [
+        {
+          "name": "Coast",
+          "values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "Accelerate",
+          "values": [
+            0.0,
+            0.7,
+            0.0
+          ]
+        },
+        {
+          "name": "Brake",
+          "values": [
+            0.0,
+            0.0,
+            0.8
+          ]
+        },
+        {
+          "name": "Steer Left + Throttle",
+          "values": [
+            -0.6,
+            0.4,
+            0.0
+          ]
+        },
+        {
+          "name": "Steer Right + Throttle",
+          "values": [
+            0.6,
+            0.4,
+            0.0
+          ]
+        }
+      ]
+    },
+    "reward_function": {
+      "components": [
+        {
+          "component_id": "progress",
+          "name": "Centerline Progress",
+          "component_type": "progress",
+          "weight": 1.0,
+          "enabled": true,
+          "params": {
+            "max_step_delta_m": 5.0
+          },
+          "description": "Reward per meter of forward progress along track centerline"
+        },
+        {
+          "component_id": "centering",
+          "name": "Centerline Deviation",
+          "component_type": "centerline",
+          "weight": 0.5,
+          "enabled": true,
+          "params": {
+            "max_distance_m": 6.0,
+            "falloff": "linear",
+            "motion_gate_ms": 5.0
+          },
+          "description": "Reward for holding track centerline while moving (1.0 at center; gated below 5 m/s)"
+        },
+        {
+          "component_id": "speed",
+          "name": "Target Speed",
+          "component_type": "speed",
+          "weight": 0.2,
+          "enabled": true,
+          "params": {
+            "target_speed_ms": 20.0,
+            "tolerance": 5.0
+          },
+          "description": "Reward for matching and maintaining target speed"
+        },
+        {
+          "component_id": "heading",
+          "name": "Heading Alignment",
+          "component_type": "heading",
+          "weight": 0.3,
+          "enabled": true,
+          "params": {
+            "motion_gate_ms": 5.0
+          },
+          "description": "Reward for holding track heading while moving (cos(heading_error); gated below 5 m/s)"
+        },
+        {
+          "component_id": "smooth_steer",
+          "name": "Steering Smoothness",
+          "component_type": "smooth_steer",
+          "weight": -0.05,
+          "enabled": true,
+          "params": {},
+          "description": "Penalty on squared change in steering angle between consecutive ticks"
+        },
+        {
+          "component_id": "checkpoint",
+          "name": "Checkpoint Crossing",
+          "component_type": "checkpoint",
+          "weight": 10.0,
+          "enabled": true,
+          "params": {},
+          "description": "Bonus awarded when legally passing a forward checkpoint gate"
+        },
+        {
+          "component_id": "completion",
+          "name": "Lap Completion",
+          "component_type": "completion",
+          "weight": 100.0,
+          "enabled": true,
+          "params": {},
+          "description": "Bonus awarded upon completing a full circuit lap or open track"
+        },
+        {
+          "component_id": "collision",
+          "name": "Collision Penalty",
+          "component_type": "collision",
+          "weight": -50.0,
+          "enabled": true,
+          "params": {},
+          "description": "Penalty on colliding with track barrier or obstacle"
+        },
+        {
+          "component_id": "off_road",
+          "name": "Off-Road Penalty",
+          "component_type": "off_road",
+          "weight": -25.0,
+          "enabled": true,
+          "params": {},
+          "description": "Penalty on leaving the drivable road surface"
+        },
+        {
+          "component_id": "reverse",
+          "name": "Reverse Driving Penalty",
+          "component_type": "reverse",
+          "weight": -1.0,
+          "enabled": true,
+          "params": {
+            "heading_threshold_deg": 100.0
+          },
+          "description": "Penalty per step for driving backward or pointing wrong direction"
+        },
+        {
+          "component_id": "time_penalty",
+          "name": "Time Step Penalty",
+          "component_type": "time_penalty",
+          "weight": -0.01,
+          "enabled": true,
+          "params": {},
+          "description": "Small per-step cost encouraging fast course completion"
+        }
+      ]
+    },
+    "termination_rules": {
+      "rules": [
+        {
+          "rule_id": "term_collision",
+          "name": "Barrier Collision",
+          "condition_type": "collision",
+          "enabled": true,
+          "is_truncation": false,
+          "params": {},
+          "description": "Terminates immediately when vehicle contacts barrier or obstacle"
+        },
+        {
+          "rule_id": "term_off_road",
+          "name": "Off-Road Excursion",
+          "condition_type": "off_road",
+          "enabled": true,
+          "is_truncation": false,
+          "params": {},
+          "description": "Terminates when vehicle fully departs road surface"
+        },
+        {
+          "rule_id": "term_wrong_direction",
+          "name": "Wrong Direction",
+          "condition_type": "wrong_direction",
+          "enabled": true,
+          "is_truncation": false,
+          "params": {
+            "max_angle_deg": 120.0
+          },
+          "description": "Terminates if heading angle exceeds 120\u00b0 relative to track"
+        },
+        {
+          "rule_id": "term_completion",
+          "name": "Lap Completion",
+          "condition_type": "course_completion",
+          "enabled": false,
+          "is_truncation": false,
+          "params": {
+            "target_laps": 1
+          },
+          "description": "Terminates with success when target laps are completed"
+        },
+        {
+          "rule_id": "trunc_max_steps",
+          "name": "Step Limit",
+          "condition_type": "max_steps",
+          "enabled": true,
+          "is_truncation": true,
+          "params": {
+            "max_steps": 5000
+          },
+          "description": "Truncates episode when maximum step limit is reached"
+        },
+        {
+          "rule_id": "trunc_stuck",
+          "name": "Stuck Timeout",
+          "condition_type": "checkpoint_timeout",
+          "enabled": true,
+          "is_truncation": true,
+          "params": {
+            "max_seconds": 30.0
+          },
+          "description": "Truncates episode if no checkpoint is passed within time window"
+        }
+      ]
+    },
+    "spawn_config": {
+      "spawn_mode": "default",
+      "pos": [
+        0.0,
+        0.0,
+        0.2
+      ],
+      "yaw_deg": 0.0,
+      "initial_speed": 0.0,
+      "lateral_jitter_m": 0.0,
+      "heading_jitter_deg": 0.0
+    }
+  },
+  "episode_config": {
+    "max_duration_seconds": 25.0,
+    "max_steps": 1500,
+    "spawn_mode": "track_spawn",
+    "initial_speed": 0.0,
+    "custom_spawn_pos": [
+      0.0,
+      0.0,
+      0.2
+    ],
+    "custom_spawn_yaw_deg": 0.0,
+    "spawn_lateral_jitter_m": 0.0,
+    "spawn_heading_jitter_deg": 0.0,
+    "random_seed": 42,
+    "reset_behavior": "hard",
+    "auto_reset_on_done": false
+  },
+  "scenario_def": {
+    "scenario_id": "basic_lane_following",
+    "name": "Basic Lane Following",
+    "description": "Clean dry conditions, standard lighting, focusing on centerline tracking.",
+    "weather": "clear",
+    "time_of_day": "day",
+    "ambient_light": 1.0,
+    "surface_friction_mult": 1.0,
+    "target_speed_override": 18.0,
+    "time_limit_override": null,
+    "sensor_noise_mult": 1.0,
+    "spawn_override": null,
+    "obstacle_overrides": [],
+    "randomization": {
+      "enabled": false,
+      "global_seed": 42,
+      "parameters": {
+        "vehicle_mass_mult": {
+          "param_name": "vehicle_mass_mult",
+          "distribution": "uniform",
+          "param1": 0.85,
+          "param2": 1.15,
+          "clip_min": 0.5,
+          "clip_max": 2.0
+        },
+        "tire_friction_mult": {
+          "param_name": "tire_friction_mult",
+          "distribution": "uniform",
+          "param1": 0.8,
+          "param2": 1.2,
+          "clip_min": 0.4,
+          "clip_max": 2.0
+        },
+        "surface_friction_mult": {
+          "param_name": "surface_friction_mult",
+          "distribution": "uniform",
+          "param1": 0.75,
+          "param2": 1.1,
+          "clip_min": 0.3,
+          "clip_max": 2.0
+        },
+        "sensor_noise_mult": {
+          "param_name": "sensor_noise_mult",
+          "distribution": "uniform",
+          "param1": 0.5,
+          "param2": 2.0,
+          "clip_min": 0.0,
+          "clip_max": 5.0
+        },
+        "spawn_lateral_jitter_m": {
+          "param_name": "spawn_lateral_jitter_m",
+          "distribution": "uniform",
+          "param1": -1.0,
+          "param2": 1.0,
+          "clip_min": -3.0,
+          "clip_max": 3.0
+        },
+        "spawn_heading_jitter_deg": {
+          "param_name": "spawn_heading_jitter_deg",
+          "distribution": "normal",
+          "param1": 0.0,
+          "param2": 5.0,
+          "clip_min": -30.0,
+          "clip_max": 30.0
+        }
+      }
+    }
+  },
+  "fingerprint": "70a8f15a69fae8a018bf164d1abc657e901c6db3ab280c6937fa460106e001e9"
+}

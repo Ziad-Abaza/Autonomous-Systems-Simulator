@@ -65,14 +65,55 @@ class SimulationCommandHandler:
             spec = {
                 'protocol_version': negotiated,
                 'supported_versions': list(SUPPORTED_PROTOCOL_VERSIONS),
-                'action_space': self.env.action_config.to_dict(),
-                'observation_schema': self.env.observation_schema.to_dict(),
-                'vector_dim': self.env.observation_schema.compute_vector_dim(),
                 'track_name': self.env.road_def.name,
                 'track_length': self.env.track.spline.total_length,
                 'physics_hz': self.env.clock.physics_hz,
                 'dt': self.env.clock.dt,
             }
+            if self.env.agent is not None:
+                # Authored-agent contract is authoritative: report the spaces
+                # the compiled pipelines actually produce/consume, not the
+                # legacy env defaults.
+                ag = self.env.agent
+                act_schema = ag.action_space.export_schema()
+                obs_schema = ag.observation_space.export_schema()
+                if act_schema.get('num_discrete_actions'):
+                    act_space = {
+                        'type': 'discrete',
+                        'discrete_actions': [d['name'] for d in
+                                             ag.action_space.discrete_options],
+                    }
+                else:
+                    act_space = {
+                        'type': 'continuous',
+                        'continuous_low': [c.min_val for c in
+                                           ag.action_space.channels],
+                        'continuous_high': [c.max_val for c in
+                                            ag.action_space.channels],
+                        'discrete_actions': [],
+                    }
+                image_chans = obs_schema.get('image_channels', [])
+                spec.update({
+                    'action_space': act_space,
+                    'observation_schema': {
+                        'flatten_vector': obs_schema.get('flatten_vector', True),
+                        'include_camera_rgb': bool(image_chans),
+                        'image_channels': image_chans,
+                        'channels': [c['name'] for c in
+                                     obs_schema.get('channels', [])],
+                    },
+                    'vector_dim': obs_schema.get('vector_dimension', 0),
+                    'action_schema': act_schema,
+                    'authored_observation_schema': obs_schema,
+                    'contract_source': 'authored_agent',
+                })
+            else:
+                spec.update({
+                    'action_space': self.env.action_config.to_dict(),
+                    'observation_schema': self.env.observation_schema.to_dict(),
+                    'vector_dim': self.env.observation_schema.compute_vector_dim(),
+                    'contract_source': 'legacy',
+                })
             return MessageType.HANDSHAKE_ACK, spec
 
         elif msg_type == MessageType.DISCOVER_CONTRACT:

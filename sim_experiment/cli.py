@@ -10,7 +10,8 @@ logic of its own:
     python -m sim_experiment.cli list
     python -m sim_experiment.cli show <experiment_id>
     python -m sim_experiment.cli launch <experiment_id> [--trainer ppo]
-    python -m sim_experiment.cli batch <experiment_id> --seeds 1 2 3
+    python -m sim_experiment.cli batch-run <experiment_id> --seeds 1 2 3
+        (legacy: `batch` is a deprecated alias of `batch-run`)
     python -m sim_experiment.cli runs <experiment_id>
     python -m sim_experiment.cli status <experiment_id> <run_id> [--watch]
     python -m sim_experiment.cli cancel <experiment_id> <run_id>
@@ -145,20 +146,18 @@ def cmd_launch(args) -> int:
 
 
 def cmd_batch(args) -> int:
-    mgr = _mgr(args)
-    manifest = mgr.load(args.experiment_id)
-    exp_dir = mgr.experiment_dir(args.experiment_id)
-    specs = expand_run_specs(manifest, seeds=args.seeds, scenario_ids=args.scenarios)
-    rmg = RunManager()
-    created = []
-    for spec in specs:
-        run = rmg.create_run(exp_dir, seed=spec["seed"],
-                             experiment_id=manifest.experiment_id)
-        created.append(run.run_id)
-    print(f"Created {len(created)} queued runs:")
-    for rid in created:
-        print(f"  {rid}")
-    return 0
+    """Deprecated alias for `batch-run` (the canonical batch workflow).
+
+    The old `batch` only created queued run records that nothing consumed;
+    `batch-run` schedules + executes them through the BatchScheduler."""
+    print("note: `batch` is deprecated — delegating to `batch-run` "
+          "(use `batch-run` directly for worker/trainer options)")
+    for attr, default in (("trainer", "ppo"), ("env_mode", "inprocess"),
+                          ("workers", 1), ("worker", None), ("token", None),
+                          ("max_retries", 0), ("timeout", 600.0)):
+        if not hasattr(args, attr):
+            setattr(args, attr, default)
+    return cmd_batch_run(args)
 
 
 def cmd_trainers(args) -> int:

@@ -17,6 +17,23 @@ class FalloffType:
     EXPONENTIAL = "exponential"
 
 
+def _motion_gate(speed: float, params: Dict[str, Any]) -> float:
+    """Scales a shaping reward by vehicle motion.
+
+    Alignment terms (centering, heading) reward *maintaining* lane
+    discipline, which is only meaningful while the vehicle is actually
+    moving. Without a gate a parked vehicle collects full alignment
+    credit (~0.8/step) — the stationary-policy exploit. When
+    ``motion_gate_ms`` is set, the raw component value is scaled by
+    ``min(1, speed / gate)`` so alignment credit requires real motion.
+    A value of 0.0 or absence disables the gate (legacy semantics).
+    """
+    gate = float(params.get("motion_gate_ms", 0.0) or 0.0)
+    if gate <= 0.0:
+        return 1.0
+    return min(1.0, max(0.0, speed / gate))
+
+
 @dataclass
 class RewardComponentConfig:
     """
@@ -72,8 +89,9 @@ class RewardFunctionDefinition:
                 name="Centerline Deviation",
                 component_type="centerline",
                 weight=0.5,
-                params={"max_distance_m": 6.0, "falloff": FalloffType.LINEAR},
-                description="Reward for staying near track centerline (1.0 at center, 0 at boundary)"
+                params={"max_distance_m": 6.0, "falloff": FalloffType.LINEAR,
+                        "motion_gate_ms": 5.0},
+                description="Reward for holding track centerline while moving (1.0 at center; gated below 5 m/s)"
             ),
             RewardComponentConfig(
                 component_id="speed",
@@ -88,8 +106,8 @@ class RewardFunctionDefinition:
                 name="Heading Alignment",
                 component_type="heading",
                 weight=0.3,
-                params={},
-                description="Reward for aligning vehicle heading with track direction (cos(heading_error))"
+                params={"motion_gate_ms": 5.0},
+                description="Reward for holding track heading while moving (cos(heading_error); gated below 5 m/s)"
             ),
             RewardComponentConfig(
                 component_id="smooth_steer",
@@ -280,6 +298,7 @@ class CompiledRewardEngine:
                     raw_val = math.exp(-3.0 * norm_dist)
                 else:  # LINEAR
                     raw_val = max(0.0, 1.0 - norm_dist)
+                raw_val *= _motion_gate(speed, comp.params)
 
             elif ctype == "speed":
                 target = comp.params.get("target_speed_ms", 20.0)
@@ -287,7 +306,7 @@ class CompiledRewardEngine:
                 raw_val = norm_speed
 
             elif ctype == "heading":
-                raw_val = math.cos(heading_error)
+                raw_val = math.cos(heading_error) * _motion_gate(speed, comp.params)
 
             elif ctype == "smooth_steer":
                 raw_val = -(delta_steer * delta_steer)

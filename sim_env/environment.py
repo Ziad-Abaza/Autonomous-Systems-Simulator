@@ -150,10 +150,31 @@ class SimulationEnvironment:
     def _compile_agent_pipelines(self) -> None:
         """Compiles authoring agent spaces and functions into zero-overhead runtime engines."""
         if self.agent is not None:
+            self._assert_obs_channel_sensor_coverage()
             self.compiled_action_decoder = self.agent.action_space.compile_decoder()
             self.compiled_obs_pipeline = self.agent.observation_space.compile_pipeline()
             self.compiled_reward_engine = self.agent.reward_function.compile_engine()
             self.compiled_termination_evaluator = self.agent.termination_rules.compile_evaluator()
+
+    def _assert_obs_channel_sensor_coverage(self) -> None:
+        """Every enabled observation channel must map to an attached sensor.
+
+        Runtime must agree with the validator: a channel whose source
+        sensor is disabled or absent would otherwise silently produce a
+        constant/zeroed column — an invalid observation contract."""
+        attached = set(self.sensors.sensors.keys())
+        missing = []
+        for ch in self.agent.observation_space.channels:
+            if ch.enabled and ch.source_sensor not in attached:
+                missing.append(f"channel '{ch.name}' -> sensor '{ch.source_sensor}'")
+        for spec in self.agent.observation_space.image_channel_specs():
+            if spec.get("name") not in attached:
+                missing.append(f"image channel -> sensor '{spec.get('name')}'")
+        if missing:
+            raise ValueError(
+                "Observation channels reference unattached/disabled sensors: "
+                + "; ".join(missing)
+                + ". Disable the channel or attach/enable the sensor.")
 
     def set_agent(self, agent: AgentDefinition) -> None:
         """Sets active agent definition, rebuilds its declarative sensor

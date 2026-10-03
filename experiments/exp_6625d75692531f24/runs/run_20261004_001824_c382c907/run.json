@@ -1,0 +1,31 @@
+{
+  "run_id": "run_20261004_001824_c382c907",
+  "experiment_id": "exp_6625d75692531f24",
+  "status": "COMPLETED",
+  "seed": 42,
+  "created_at": 1791062304.1213691,
+  "started_at": 1791062304.180632,
+  "ended_at": 1791062312.9704351,
+  "pid": 2524,
+  "current_timestep": 512,
+  "episode_count": 0,
+  "latest_metrics": {
+    "final": 1.0,
+    "episodes_completed": 0,
+    "overall_mean_return": 0.0,
+    "collision_rate": 0.0,
+    "off_road_rate": 0.0,
+    "sps": 243.9
+  },
+  "checkpoints": [
+    "checkpoints/policy_final.pt"
+  ],
+  "evaluation_results": [],
+  "replays": [],
+  "resume_from": null,
+  "error": null,
+  "exit_code": 0,
+  "trainer": "sim_experiment.trainers.ppo_trainer",
+  "env_mode": "inprocess",
+  "num_envs": 1
+}

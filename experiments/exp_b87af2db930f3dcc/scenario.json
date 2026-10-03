@@ -1,0 +1,68 @@
+{
+  "scenario_id": "basic_lane_following",
+  "name": "Basic Lane Following",
+  "description": "Clean dry conditions, standard lighting, focusing on centerline tracking.",
+  "weather": "clear",
+  "time_of_day": "day",
+  "ambient_light": 1.0,
+  "surface_friction_mult": 1.0,
+  "target_speed_override": 18.0,
+  "time_limit_override": null,
+  "sensor_noise_mult": 1.0,
+  "spawn_override": null,
+  "obstacle_overrides": [],
+  "randomization": {
+    "enabled": false,
+    "global_seed": 42,
+    "parameters": {
+      "vehicle_mass_mult": {
+        "param_name": "vehicle_mass_mult",
+        "distribution": "uniform",
+        "param1": 0.85,
+        "param2": 1.15,
+        "clip_min": 0.5,
+        "clip_max": 2.0
+      },
+      "tire_friction_mult": {
+        "param_name": "tire_friction_mult",
+        "distribution": "uniform",
+        "param1": 0.8,
+        "param2": 1.2,
+        "clip_min": 0.4,
+        "clip_max": 2.0
+      },
+      "surface_friction_mult": {
+        "param_name": "surface_friction_mult",
+        "distribution": "uniform",
+        "param1": 0.75,
+        "param2": 1.1,
+        "clip_min": 0.3,
+        "clip_max": 2.0
+      },
+      "sensor_noise_mult": {
+        "param_name": "sensor_noise_mult",
+        "distribution": "uniform",
+        "param1": 0.5,
+        "param2": 2.0,
+        "clip_min": 0.0,
+        "clip_max": 5.0
+      },
+      "spawn_lateral_jitter_m": {
+        "param_name": "spawn_lateral_jitter_m",
+        "distribution": "uniform",
+        "param1": -1.0,
+        "param2": 1.0,
+        "clip_min": -3.0,
+        "clip_max": 3.0
+      },
+      "spawn_heading_jitter_deg": {
+        "param_name": "spawn_heading_jitter_deg",
+        "distribution": "normal",
+        "param1": 0.0,
+        "param2": 5.0,
+        "clip_min": -30.0,
+        "clip_max": 30.0
+      }
+    }
+  }
+}

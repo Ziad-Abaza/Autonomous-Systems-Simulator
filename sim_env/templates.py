@@ -71,6 +71,9 @@ class EnvironmentTemplateManager:
         road.num_checkpoints = 4
 
         agent = AgentDefinition.create_default_vehicle_agent(agent_id="sandbox_agent")
+        term = agent.termination_rules.get_rule("term_completion")
+        if term:
+            term.enabled = True
         return EnvironmentProject(
             name="Empty Sandbox Environment",
             road_def=road,
@@ -142,6 +145,9 @@ class EnvironmentTemplateManager:
 
         agent = AgentDefinition.create_default_vehicle_agent(
             agent_id="sprint_agent")
+        term = agent.termination_rules.get_rule("term_completion")
+        if term:
+            term.enabled = True
         return EnvironmentProject(
             name="Straight Sprint Route",
             road_def=road,
@@ -197,6 +203,9 @@ class EnvironmentTemplateManager:
 
         agent = AgentDefinition.create_default_vehicle_agent(
             agent_id="slalom_agent")
+        term = agent.termination_rules.get_rule("term_completion")
+        if term:
+            term.enabled = True
         proj = EnvironmentProject(
             name="Cone Slalom Course",
             road_def=road,

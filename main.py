@@ -33,6 +33,8 @@ def parse_args():
     parser.add_argument("--port", type=int, default=8765, help="TCP port for external AI model connection (default: 8765)")
     parser.add_argument("--num-envs", type=int, default=1, help="Headless only: host N independent envs on --port via one multi-client server (default: 1)")
     parser.add_argument("--track", type=str, default=None, help="Open this track directly into the workspace: 'oval', 'serpentine', 'obstacle', or path to .sim.json (default: studio home)")
+    parser.add_argument("--record", type=str, default=None, metavar="DIR",
+                        help="Record episodes to DIR — in headless mode captures external TCP steps")
     parser.add_argument("--width", type=int, default=1280, help="Window width (default: 1280)")
     parser.add_argument("--height", type=int, default=720, help="Window height (default: 720)")
     return parser.parse_args()
@@ -80,8 +82,19 @@ def _run_multi_headless(port: int, num_envs: int, track: Optional[str]) -> int:
 def main():
     args = parse_args()
 
+    # Frozen module-passthrough: the orchestrator re-invokes this exe as
+    # `app --module sim_experiment.trainers.X ...` for trainer subprocesses.
+    if "--module" in sys.argv:
+        i = sys.argv.index("--module")
+        mod = sys.argv[i + 1]
+        del sys.argv[i:i + 2]
+        import runpy
+        runpy.run_module(mod, run_name="__main__")
+        return
+
+    from sim_project.paths import resource_root
     # Pre-generate preset files if not already created
-    preset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+    preset_dir = os.path.join(resource_root(), "presets")
     if not os.path.exists(preset_dir):
         save_default_presets(preset_dir)
 
@@ -120,6 +133,10 @@ def main():
             proj = None
         if proj is not None:
             app.open_project(proj, None)
+
+    if args.record:
+        os.makedirs(args.record, exist_ok=True)
+        app.start_recording(app.suggest_recording_name(), args.record)
 
     try:
         app.run()

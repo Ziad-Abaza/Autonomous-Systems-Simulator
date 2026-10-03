@@ -4,16 +4,31 @@
 import os
 
 # Resolve entry point relative to this spec file — never hardcode a
-# development-machine path.
-_spec_dir = os.path.dirname(os.path.abspath(
-    SPECPATH if 'SPECPATH' in globals() else __file__))
+# development-machine path. PyInstaller defines SPECPATH as the
+# directory containing this spec.
+_spec_dir = os.path.abspath(SPECPATH)
 
 a = Analysis(
     [os.path.join(_spec_dir, 'main.py')],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['moderngl', 'glcontext', 'OpenGL', 'OpenGL.GL', 'pygame', 'numpy', 'cv2', 'PIL', 'shapely', 'scipy', 'gymnasium', 'sim_core', 'sim_env', 'sim_net', 'sim_client', 'sim_ui', 'sim_render', 'sim_recorder', 'sim_project'],
+    datas=[
+        (os.path.join(_spec_dir, 'presets'), 'presets'),
+    ],
+    hiddenimports=[
+        'moderngl', 'glcontext', 'OpenGL', 'OpenGL.GL', 'pygame', 'numpy',
+        'cv2', 'PIL', 'shapely', 'scipy', 'gymnasium',
+        'sim_core', 'sim_env', 'sim_net', 'sim_client', 'sim_ui',
+        'sim_render', 'sim_recorder', 'sim_project', 'sim_experiment',
+        # trainer modules are reached at runtime via the frozen --module
+        # passthrough (runpy) — invisible to static analysis
+        'sim_experiment.trainers.ppo_trainer',
+        'sim_experiment.trainers.sac_trainer',
+        'sim_experiment.trainers.dqn_trainer',
+        'sim_experiment.trainers.bc_trainer',
+        'sim_experiment.evaluation',
+        'sim_net.multi_server',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

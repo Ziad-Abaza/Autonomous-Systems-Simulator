@@ -867,6 +867,16 @@ class EnvironmentInspector:
             for ch in act.channels:
                 if ch.name == ch_name:
                     ch.rate_limit = round(max(0.0, min(30.0, ch.rate_limit + delta_or_value)), 1)
+        elif prop_id.startswith("act_min_"):
+            ch_name = prop_id.replace("act_min_", "")
+            for ch in act.channels:
+                if ch.name == ch_name:
+                    ch.min_val = round(max(-1.0, min(min(0.0, ch.max_val), ch.min_val + delta_or_value)), 2)
+        elif prop_id.startswith("act_max_"):
+            ch_name = prop_id.replace("act_max_", "")
+            for ch in act.channels:
+                if ch.name == ch_name:
+                    ch.max_val = round(min(1.0, max(max(0.0, ch.min_val), ch.max_val + delta_or_value)), 2)
 
         # Rewards
         elif prop_id.startswith("rf_en_"):
@@ -888,6 +898,31 @@ class EnvironmentInspector:
                 rule.enabled = not rule.enabled
 
         # Scenario
+        elif prop_id == "scen_select":
+            import copy
+            from dataclasses import fields as _dc_fields
+            presets = ScenarioDefinition.get_standard_scenarios()
+            names = [s.name for s in presets.values()]
+            try:
+                idx = (names.index(sc.name) + 1) % len(names)
+            except ValueError:
+                idx = 0
+            src = list(presets.values())[idx]
+            # in-place copy keeps the shared ref: env + project pick it up
+            for f in _dc_fields(src):
+                setattr(sc, f.name, copy.deepcopy(getattr(src, f.name)))
+        elif prop_id == "scen_weather":
+            opts = ["clear", "rain", "fog"]
+            try:
+                sc.weather = opts[(opts.index(sc.weather) + 1) % len(opts)]
+            except ValueError:
+                sc.weather = opts[0]
+        elif prop_id == "scen_time":
+            opts = ["day", "dusk", "night"]
+            try:
+                sc.time_of_day = opts[(opts.index(sc.time_of_day) + 1) % len(opts)]
+            except ValueError:
+                sc.time_of_day = opts[0]
         elif prop_id == "scen_friction":
             sc.surface_friction_mult = round(max(0.2, min(2.0, sc.surface_friction_mult + delta_or_value)), 2)
         elif prop_id == "scen_light":

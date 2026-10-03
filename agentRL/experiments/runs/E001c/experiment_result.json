@@ -1,0 +1,30 @@
+{
+  "id": "E001c",
+  "kind": "single",
+  "name": "Oval + init_speed 8 + PD demo warmstart 15k",
+  "algos": [
+    "sac"
+  ],
+  "track": "oval",
+  "steps": 60000,
+  "obs_preset": "full23",
+  "seed": 42,
+  "eval_episodes": 3,
+  "initial_speed": 8.0,
+  "demos": {
+    "steps": 15000,
+    "vmax": 14.0
+  },
+  "agent_overrides": {
+    "warmup": 500,
+    "batch": 256
+  },
+  "results": {
+    "sac": {
+      "timesteps": 60000,
+      "episodes": 204,
+      "run_dir": "D:\\coding\\projects\\Simulation\\agentRL\\experiments\\runs\\E001c\\sac",
+      "wall_s": 1764.24
+    }
+  }
+}

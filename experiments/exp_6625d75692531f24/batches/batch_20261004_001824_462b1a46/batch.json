@@ -1,0 +1,64 @@
+{
+  "batch_id": "batch_20261004_001824_462b1a46",
+  "experiment_id": "exp_6625d75692531f24",
+  "trainer": "ppo",
+  "env_mode": "inprocess",
+  "retry_policy": {
+    "max_retries": 0,
+    "retryable_error_types": [
+      "launch_failure",
+      "timeout",
+      "trainer_crash",
+      "trainer_exception",
+      "worker_crash"
+    ]
+  },
+  "created_at": 1791062304.114,
+  "jobs": [
+    {
+      "job_id": "batch_20261004_001824_462b1a46_job0",
+      "index": 0,
+      "spec": {
+        "seed": 42,
+        "scenario_id": "basic_lane_following"
+      },
+      "status": "COMPLETED",
+      "attempts": [
+        {
+          "attempt": 1,
+          "started_at": 1791062304.1193,
+          "status": "COMPLETED",
+          "run_id": "run_20261004_001824_c382c907",
+          "worker_id": "remote_127.0.0.1:9777",
+          "ended_at": 1791062312.9868,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "workers": [
+    {
+      "worker_id": "remote_127.0.0.1:9777",
+      "capabilities": {
+        "type": "remote",
+        "trainers": [
+          "bc",
+          "dqn",
+          "dummy",
+          "ppo",
+          "sac"
+        ],
+        "max_envs_per_run": null,
+        "worker_protocol_version": "1.0",
+        "worker_id": "worker_21866c947e2f",
+        "heartbeat": true
+      },
+      "status": "IDLE",
+      "current_run_id": null,
+      "current_job_id": null,
+      "metadata": {},
+      "last_heartbeat": 1791062304.1153798,
+      "missed_heartbeats": 0
+    }
+  ]
+}

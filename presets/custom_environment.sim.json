@@ -550,7 +550,8 @@
           "enabled": true,
           "params": {
             "max_distance_m": 6.0,
-            "falloff": "linear"
+            "falloff": "linear",
+            "motion_gate_ms": 5.0
           },
           "description": "Reward for staying near track centerline (1.0 at center, 0 at boundary)"
         },
@@ -572,7 +573,9 @@
           "component_type": "heading",
           "weight": 0.3,
           "enabled": true,
-          "params": {},
+          "params": {
+            "motion_gate_ms": 5.0
+          },
           "description": "Reward for aligning vehicle heading with track direction (cos(heading_error))"
         },
         {

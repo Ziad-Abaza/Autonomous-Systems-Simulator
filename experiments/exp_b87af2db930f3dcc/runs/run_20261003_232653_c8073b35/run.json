@@ -1,0 +1,26 @@
+{
+  "run_id": "run_20261003_232653_c8073b35",
+  "experiment_id": "exp_b87af2db930f3dcc",
+  "status": "COMPLETED",
+  "seed": 42,
+  "created_at": 1791059213.480626,
+  "started_at": 1791059213.5436373,
+  "ended_at": 1791059214.4872267,
+  "pid": 10440,
+  "current_timestep": 512,
+  "episode_count": 51,
+  "latest_metrics": {
+    "done": 1.0
+  },
+  "checkpoints": [
+    "checkpoints/dummy_512.ckpt"
+  ],
+  "evaluation_results": [],
+  "replays": [],
+  "resume_from": null,
+  "error": null,
+  "exit_code": 0,
+  "trainer": "sim_experiment.trainers.dummy_trainer",
+  "env_mode": "inprocess",
+  "num_envs": 1
+}

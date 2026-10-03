@@ -1,9 +1,3 @@
----
-noteId: "9f0d96b0bed711f1a29f1fbaabbd87c8"
-tags: []
-
----
-
 # Baseline PPO Experiment: Proving Ground Circuit
 
 **Algorithm:** Proximal Policy Optimization (PPO)  

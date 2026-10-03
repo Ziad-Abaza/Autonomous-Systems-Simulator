@@ -53,10 +53,10 @@ class StudioSettings:
         v = self._data.get("data_root") or ""
         if v:
             return os.path.abspath(v)
-        # Default: <repo>/data — independent of where the settings file
-        # itself lives (the file is stored inside this directory).
-        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(repo, "data")
+        # Default: <runtime_root>/data — independent of where the settings
+        # file itself lives (the file is stored inside this directory).
+        from sim_project.paths import runtime_root
+        return os.path.join(runtime_root(), "data")
 
     @data_root.setter
     def data_root(self, v: str) -> None:

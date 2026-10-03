@@ -19,6 +19,7 @@ class RewardConfig:
     target_speed: float = 20.0             # m/s target
     weight_heading: float = 0.3            # Reward for aligning with track direction (cos(heading_error))
     weight_action_smoothness: float = 0.05 # Penalty for rapid steering changes
+    motion_gate_ms: float = 5.0            # Speed (m/s) at which alignment shaping reaches full credit; 0 disables the gate (legacy semantics)
 
     # Event rewards & penalties
     checkpoint_bonus: float = 10.0         # Bonus on passing each checkpoint
@@ -138,17 +139,21 @@ class RewardEngine:
         if delta_s < -0.05 or abs(heading_error) > (math.pi * 0.6):
             r_backward = -cfg.backward_penalty
 
+        # Motion gate: alignment shaping only applies while actually moving —
+        # a parked vehicle is not "keeping" the lane (stationary-policy exploit).
+        motion = 1.0 if cfg.motion_gate_ms <= 0.0 else min(1.0, max(0.0, speed / cfg.motion_gate_ms))
+
         # 2. Centering reward: 1.0 at center, falling to 0.0 at edge
         half_w = max(1.0, road_width * 0.5)
         norm_lat = min(1.0, abs(lateral_offset) / half_w)
-        r_centering = (1.0 - norm_lat) * cfg.weight_centering
+        r_centering = (1.0 - norm_lat) * cfg.weight_centering * motion
 
         # 3. Speed reward: reward matching target speed smoothly
         norm_speed = min(1.0, max(0.0, speed / max(1.0, cfg.target_speed)))
         r_speed = norm_speed * cfg.weight_speed
 
         # 4. Heading alignment: cos(heading_error) is +1 when aligned, -1 when opposite
-        r_heading = math.cos(heading_error) * cfg.weight_heading
+        r_heading = math.cos(heading_error) * cfg.weight_heading * motion
 
         # 5. Action smoothness penalty: penalizes twitchy steering
         delta_steer = current_steer - self.prev_steer

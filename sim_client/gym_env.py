@@ -45,14 +45,31 @@ class SimGymEnv(gym.Env):
 
         # Configure observation space
         obs_schema = spec.get('observation_schema', {})
-        include_cam = obs_schema.get('include_camera_rgb', False)
+        authored = spec.get('authored_observation_schema', {})
+        # Effective named camera channels (authored contract wins over the
+        # legacy single-camera flag); keys match the obs-dict contract:
+        # "image" for rgb_camera, "image_<name>" for others.
+        image_chans = (obs_schema.get('image_channels')
+                       or authored.get('image_channels') or [])
+        include_cam = bool(image_chans) or obs_schema.get('include_camera_rgb', False)
         flatten_vec = obs_schema.get('flatten_vector', True)
+
+        def _image_key(name: str) -> str:
+            return "image" if name == "rgb_camera" else f"image_{name}"
 
         if flatten_vec:
             if include_cam and obs_dim > 0:
+                img_spaces = {}
+                for spec_ in image_chans:
+                    img_spaces[_image_key(spec_['name'])] = spaces.Box(
+                        low=0, high=255, shape=tuple(spec_.get('shape', [84, 84, 3])),
+                        dtype=np.uint8)
+                if not img_spaces:
+                    img_spaces['image'] = spaces.Box(
+                        low=0, high=255, shape=(84, 84, 3), dtype=np.uint8)
                 self.observation_space = spaces.Dict({
                     'vector': spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32),
-                    'image': spaces.Box(low=0, high=255, shape=(84, 84, 3), dtype=np.uint8)
+                    **img_spaces
                 })
             elif include_cam and obs_dim == 0:
                 self.observation_space = spaces.Box(low=0, high=255, shape=(84, 84, 3), dtype=np.uint8)

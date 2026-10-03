@@ -41,6 +41,7 @@ class EnvFactory:
         obs_spec: ObservationSpec | None = None,
         sensor_names: tuple[str, ...] | None = None,
         max_duration_s: float | None = 120.0,
+        initial_speed: float | None = None,
     ) -> None:
         self.reward_name = reward
         self.termination_name = termination
@@ -48,6 +49,7 @@ class EnvFactory:
             channel_names=PRESETS["full23"])
         self.sensor_names = sensor_names
         self.max_duration_s = max_duration_s
+        self.initial_speed = initial_speed
 
     # -- project-dict surgery -------------------------------------------------
 
@@ -89,6 +91,13 @@ class EnvFactory:
             proj.setdefault("episode_config", {})
             proj["episode_config"]["max_duration_seconds"] = \
                 float(self.max_duration_s)
+        if self.initial_speed is not None:
+            proj.setdefault("road_definition", {}).setdefault(
+                "spawn_point", {})
+            proj["road_definition"]["spawn_point"]["initial_speed"] = \
+                float(self.initial_speed)
+            proj["episode_config"]["initial_speed"] = \
+                float(self.initial_speed)
         return proj
 
     def with_obs_spec(self, spec: ObservationSpec) -> "EnvFactory":
@@ -97,7 +106,8 @@ class EnvFactory:
                           termination=self.termination_name,
                           obs_spec=spec,
                           sensor_names=self.sensor_names,
-                          max_duration_s=self.max_duration_s)
+                          max_duration_s=self.max_duration_s,
+                          initial_speed=self.initial_speed)
 
     def build(self, track: TrackSpec,
               seed: int = 42) -> SimulationEnvironment:

@@ -1,0 +1,53 @@
+{
+  "batch_id": "batch_20261004_001824_462b1a46",
+  "experiment_id": "exp_6625d75692531f24",
+  "trainer": "ppo",
+  "env_mode": "inprocess",
+  "status": "completed",
+  "created_at": 1791062304.114,
+  "finished_at": 1791062312.9891,
+  "duration_s": 8.875,
+  "runs": [
+    {
+      "job_id": "batch_20261004_001824_462b1a46_job0",
+      "spec": {
+        "seed": 42,
+        "scenario_id": "basic_lane_following"
+      },
+      "status": "COMPLETED",
+      "run_ids": [
+        "run_20261004_001824_c382c907"
+      ],
+      "run_id": "run_20261004_001824_c382c907",
+      "attempts": [
+        {
+          "attempt": 1,
+          "started_at": 1791062304.1193,
+          "status": "COMPLETED",
+          "run_id": "run_20261004_001824_c382c907",
+          "worker_id": "remote_127.0.0.1:9777",
+          "ended_at": 1791062312.9868,
+          "error": null
+        }
+      ],
+      "retries": 0,
+      "metrics": {
+        "final": 1.0,
+        "episodes_completed": 0,
+        "overall_mean_return": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "sps": 243.9
+      },
+      "timesteps": 512,
+      "episode_count": 0,
+      "artifacts": {
+        "checkpoints": [
+          "checkpoints/policy_final.pt"
+        ],
+        "evaluations": [],
+        "replays": []
+      }
+    }
+  ]
+}

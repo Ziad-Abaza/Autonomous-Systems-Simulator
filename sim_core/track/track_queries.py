@@ -29,6 +29,25 @@ class TrackSpatialQueries:
         heading_error = self.track.spline.get_heading_error(yaw, tangent_angle)
         half_width = sp.width * 0.5
         is_on_road = abs(lateral_offset) <= half_width
+        past_course_end = False
+
+        # Open-route end semantics: the projection clamps to the nearest
+        # sample, so positions beyond either end were previously classified
+        # as "on road" with ~0 lateral offset. The road physically ends at
+        # the first/last sample — anything beyond along the tangent is
+        # off the drivable surface.
+        if is_on_road and not self.track.spline.is_closed and self.track.spline.samples:
+            tangent_2d = Vec2(sp.tangent.x, sp.tangent.y)
+            to_pt = pos_2d - Vec2(sp.pos.x, sp.pos.y)
+            fwd = to_pt.dot(tangent_2d)
+            first = self.track.spline.samples[0]
+            last = self.track.spline.samples[-1]
+            if sp is last and fwd > 0.0:
+                past_course_end = True
+            elif sp is first and fwd < 0.0:
+                past_course_end = True
+            if past_course_end:
+                is_on_road = False
 
         return {
             's': s,
@@ -36,6 +55,7 @@ class TrackSpatialQueries:
             'tangent_angle': tangent_angle,
             'heading_error': heading_error,
             'is_on_road': is_on_road,
+            'past_course_end': past_course_end,
             'road_width': sp.width,
             'elevation': sp.elevation,
         }

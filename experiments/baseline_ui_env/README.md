@@ -1,9 +1,3 @@
----
-noteId: "510472b0beda11f1a29f1fbaabbd87c8"
-tags: []
-
----
-
 # Studio-Authored RL Environment PPO Verification
 
 **Status:** Completed & Formally Verified  

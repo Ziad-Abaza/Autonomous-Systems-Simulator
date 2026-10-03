@@ -86,8 +86,16 @@ tracks/
 data/
 studio_settings.json
 
-# Internal docs & dev evidence
-docs/
+# Internal docs & dev evidence — phase reports, audits, and QA shots stay
+# local; the curated documentation system under docs/ IS tracked.
+docs/phase7_shots/
+docs/superpowers/
+docs/master_audit/
+docs/*.md
+docs/*.json
+!docs/README.md
+!docs/DOCUMENTATION_AUDIT.md
+!docs/DOCUMENTATION_IMPLEMENTATION_REPORT.md
 
 # agentRL training artifacts (checkpoints, metrics, eval outputs)
 agentRL/runs/

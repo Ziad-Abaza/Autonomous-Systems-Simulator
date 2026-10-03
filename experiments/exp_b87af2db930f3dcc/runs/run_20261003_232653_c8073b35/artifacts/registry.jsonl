@@ -1,0 +1,1 @@
+{"kind": "checkpoint", "path": "checkpoints/dummy_512.ckpt", "created_at": 1791059214.2633, "step": 512, "metadata": {"algorithm": "dummy"}}

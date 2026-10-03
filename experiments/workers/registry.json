@@ -1,0 +1,12 @@
+{
+  "workers": {
+    "worker_21866c947e2f": {
+      "worker_id": "worker_21866c947e2f",
+      "capabilities": {},
+      "meta": {},
+      "status": "ONLINE",
+      "registered_at": 1791062304.1165,
+      "last_heartbeat": null
+    }
+  }
+}

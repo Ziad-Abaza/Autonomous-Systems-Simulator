@@ -1,0 +1,1 @@
+{"id":"E001b","kind":"single","name":"Oval with initial_speed=8 (exploration unlock)","algos":["sac"],"track":"oval","steps":60000,"obs_preset":"full23","seed":42,"eval_episodes":3,"initial_speed":8.0,"agent_overrides":{"warmup":2000,"batch":256}}
