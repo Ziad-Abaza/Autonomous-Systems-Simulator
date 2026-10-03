@@ -10,6 +10,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "slow: marks tests that spawn sim processes / long runs")
+
 TRACKS = {
     "oval": REPO_ROOT / "tracks" / "basic_driving_proving_ground.sim.json",
     "serpentine": REPO_ROOT / "tracks" / "lane_following_serpentine_circuit.sim.json",

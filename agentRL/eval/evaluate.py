@@ -28,6 +28,9 @@ def evaluate_policy(
     out_rows: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Run deterministic eval episodes; return per_episode + aggregate."""
+    # the checkpoint's spec is authoritative — the env must emit it
+    spec = getattr(agent, "obs_spec", None) or factory.obs_spec
+    factory = factory.with_obs_spec(spec)
     env = factory.build(track, seed=0)
     encoder = ObsEncoder(factory.obs_spec)
     episodes: list[dict[str, Any]] = []

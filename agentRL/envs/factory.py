@@ -91,6 +91,14 @@ class EnvFactory:
                 float(self.max_duration_s)
         return proj
 
+    def with_obs_spec(self, spec: ObservationSpec) -> "EnvFactory":
+        """Clone with a different observation spec (e.g. an agent's own)."""
+        return EnvFactory(reward=self.reward_name,
+                          termination=self.termination_name,
+                          obs_spec=spec,
+                          sensor_names=self.sensor_names,
+                          max_duration_s=self.max_duration_s)
+
     def build(self, track: TrackSpec,
               seed: int = 42) -> SimulationEnvironment:
         return build_env_from_dicts(self.project_dict(track), seed=seed)
