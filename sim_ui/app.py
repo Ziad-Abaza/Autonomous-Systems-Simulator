@@ -201,6 +201,7 @@ class SimulationStudioApp:
         def do_agent_modified():
             self.env.set_agent(self.inspector.agent)
             self.project.agent = self.inspector.agent
+            self._wire_camera_sensors()
             print("[Studio] Recompiled agent action/obs/reward/term runtime pipelines.")
         self.inspector.on_agent_modified = do_agent_modified
 
@@ -236,27 +237,45 @@ class SimulationStudioApp:
         self.inspector.train_provider = self._train_provider
         self.inspector.on_train_action = self._train_action
 
-        # Hook synthetic camera sensor to offscreen renderer
-        cam_sensor = self.env.sensors.get_sensor("rgb_camera")
-        if cam_sensor and hasattr(cam_sensor, 'set_offscreen_renderer'):
-            self.offscreen_fbo = OffscreenFBO(self.gl_ctx, width=cam_sensor.width, height=cam_sensor.height)
-            def offscreen_render_hook(sensor):
-                return self._render_offscreen_camera(sensor)
-            cam_sensor.set_offscreen_renderer(offscreen_render_hook)
+        # Hook every camera sensor to the offscreen renderer (one FBO per
+        # camera; camera sensors may come from the authored sensor suite)
+        self.offscreen_fbos: Dict[str, Any] = {}
+        self._wire_camera_sensors()
 
         self.clock = pygame.time.Clock()
 
+    def _wire_camera_sensors(self) -> None:
+        """Attach the offscreen-render hook to every camera sensor in the
+        active suite. Rebuilt suites (agent swap) must be re-wired."""
+        self.offscreen_fbos = getattr(self, "offscreen_fbos", {})
+        for name, sensor in self.env.sensors.sensors.items():
+            if getattr(sensor, "sensor_type", "") != "camera_rgb":
+                continue
+            if hasattr(sensor, "set_offscreen_renderer"):
+                sensor.set_offscreen_renderer(
+                    lambda s: self._render_offscreen_camera(s))
+            if (name not in self.offscreen_fbos
+                    or self.offscreen_fbos[name].width != sensor.width
+                    or self.offscreen_fbos[name].height != sensor.height):
+                self.offscreen_fbos[name] = OffscreenFBO(
+                    self.gl_ctx, width=sensor.width, height=sensor.height)
+
     def _render_offscreen_camera(self, camera_sensor: Any) -> Optional[np.ndarray]:
         """Renders scene from vehicle's onboard camera into offscreen FBO using isolated agent camera."""
-        if not hasattr(self, 'offscreen_fbo') or self.offscreen_fbo is None:
+        fbo = getattr(self, "offscreen_fbos", {}).get(camera_sensor.name)
+        if fbo is None:
             return None
 
-        # Only execute offscreen render pass if camera observations are enabled
-        if not self.env.observation_schema.include_camera_rgb:
+        # Render only when a camera image is part of the agent contract
+        legacy = getattr(self.env.observation_schema, "include_camera_rgb", False)
+        authored = bool(getattr(
+            self.env.agent.observation_space, "image_channel_specs",
+            lambda: [])()) if self.env.agent else False
+        if not (legacy or authored):
             return None
 
         try:
-            self.offscreen_fbo.bind()
+            fbo.bind()
             st = self.env.vehicle.state
             cos_y = math.cos(st.yaw)
             sin_y = math.sin(st.yaw)
@@ -264,8 +283,15 @@ class SimulationStudioApp:
             cam_y = st.pos.y + sin_y * camera_sensor.local_pos.x + cos_y * camera_sensor.local_pos.y
             cam_z = st.pos.z + camera_sensor.local_pos.z
 
+            # Camera orientation = vehicle yaw + camera's local yaw
+            cam_yaw = st.yaw + getattr(camera_sensor, "local_yaw", 0.0)
+            fwd_x = math.cos(cam_yaw)
+            fwd_y = math.sin(cam_yaw)
+            pitch = getattr(camera_sensor, "local_pitch", 0.0)
             self.agent_camera.pos = Vec3(cam_x, cam_y, cam_z)
-            self.agent_camera.target = Vec3(cam_x + cos_y * 20.0, cam_y + sin_y * 20.0, cam_z + math.sin(camera_sensor.local_pitch) * 20.0)
+            self.agent_camera.target = Vec3(
+                cam_x + fwd_x * 20.0, cam_y + fwd_y * 20.0,
+                cam_z + math.sin(pitch) * 20.0)
             self.agent_camera.fov_degrees = camera_sensor.fov_degrees
 
             # Render 3D scene from vehicle camera with ZERO debug overlays
@@ -285,7 +311,7 @@ class SimulationStudioApp:
                 camera=self.agent_camera
             )
 
-            img = self.offscreen_fbo.read_rgb()
+            img = fbo.read_rgb()
             return img
         finally:
             # ALWAYS restore main window default framebuffer and viewport!
@@ -471,7 +497,10 @@ class SimulationStudioApp:
                                      "checkpoint": os.path.join(rd, ckpt["path"])},
                     )
                     ts["selected_run_id"] = new_id
-                    print(f"[Studio] Resumed as run {new_id}")
+                    self._status(f"Resumed as run {new_id}", "ok")
+                else:
+                    self._status("No checkpoint found in this run — "
+                                 "cannot resume", "warn")
 
             elif prop_id == "trn_eval" and ts["selected_experiment"] and ts["selected_run_id"]:
                 from sim_experiment.artifacts import ArtifactRegistry
@@ -504,6 +533,12 @@ class SimulationStudioApp:
                     self.run_mgr.add_artifact_ref(exp_dir, ts["selected_run_id"],
                                                   "evaluation", os.path.relpath(eval_path, rd))
                     print(f"[Studio] Evaluation: mean_reward={result.aggregate['mean_reward']}")
+                    self._status(
+                        f"Evaluation done — mean reward "
+                        f"{result.aggregate['mean_reward']:.1f}", "ok")
+                else:
+                    self._status("No checkpoint found in this run — "
+                                 "cannot evaluate", "warn")
 
             elif prop_id == "trn_repro" and ts["selected_experiment"]:
                 report = check_reproducibility(
@@ -516,10 +551,11 @@ class SimulationStudioApp:
                 dest = os.path.join(self.exp_mgr.root_dir, "exported",
                                     ts["selected_experiment"])
                 self.exp_mgr.export(ts["selected_experiment"], dest)
-                print(f"[Studio] Exported experiment to {dest}")
+                self._status(f"Exported experiment to {dest}", "ok")
 
         except Exception as e:
             print(f"[Studio] Training action '{prop_id}' failed: {e}")
+            self._status(f"{prop_id}: {e}", "error")
 
     def _poll_training_runs(self) -> None:
         """Throttled run monitoring: refreshes status/progress ~1 Hz."""
@@ -542,8 +578,10 @@ class SimulationStudioApp:
                     batch_rec["finalized"] = True
                     print(f"[Studio] Batch {batch_rec['batch_id']} finished: "
                           f"{result['status']}")
-            except Exception:
-                pass
+            except Exception as e:
+                if now - self.train_state.get("poll_warned", 0.0) > 30.0:
+                    self.train_state["poll_warned"] = now
+                    self._status(f"Batch scheduler error: {e}", "warn")
 
         sel_exp = self.train_state["selected_experiment"]
         if not sel_exp:
@@ -553,8 +591,10 @@ class SimulationStudioApp:
             for summary in self.run_mgr.list_runs(exp_dir):
                 if summary["status"] in ("QUEUED", "STARTING", "RUNNING", "PAUSED"):
                     self.orch.poll(exp_dir, summary["run_id"])
-        except Exception:
-            pass
+        except Exception as e:
+            if now - self.train_state.get("poll_warned", 0.0) > 30.0:
+                self.train_state["poll_warned"] = now
+                self._status(f"Run monitor error: {e}", "warn")
 
     # ------------------------------------------------- studio shell
 
@@ -628,6 +668,7 @@ class SimulationStudioApp:
         self.env.scenario_def = proj.scenario_def
         self.env.set_road_definition(proj.road_def)
         if not self.headless:
+            self._wire_camera_sensors()
             self.renderer.load_track(self.env.track)
             self.track_editor.road_def = self.env.road_def
             self.track_editor.entities = self.env.entities

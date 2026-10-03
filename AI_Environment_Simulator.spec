@@ -1,8 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+import os
+
+# Resolve entry point relative to this spec file — never hardcode a
+# development-machine path.
+_spec_dir = os.path.dirname(os.path.abspath(
+    SPECPATH if 'SPECPATH' in globals() else __file__))
+
 a = Analysis(
-    ['D:/coding/projects/Simulation/main.py'],
+    [os.path.join(_spec_dir, 'main.py')],
     pathex=[],
     binaries=[],
     datas=[],

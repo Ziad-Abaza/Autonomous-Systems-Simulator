@@ -77,6 +77,10 @@ class ObservationSpaceDefinition:
     channels: List[ObservationChannelConfig] = field(default_factory=list)
     flatten_vector: bool = True
     include_image_channel: bool = False
+    # Named camera image channels: [{"name": sensor_name, "shape": [H,W,C]}].
+    # `include_image_channel` remains as the legacy single-camera flag;
+    # image_channels is the authoritative multi-camera contract.
+    image_channels: List[Dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def create_default_space(cls) -> ObservationSpaceDefinition:
@@ -198,6 +202,15 @@ class ObservationSpaceDefinition:
         ]
         return cls(channels=channels, flatten_vector=True, include_image_channel=False)
 
+    def image_channel_specs(self) -> List[Dict[str, Any]]:
+        """Effective image channel list — legacy flag degrades to the
+        single default camera for backward compatibility."""
+        if self.image_channels:
+            return self.image_channels
+        if self.include_image_channel:
+            return [{"name": "rgb_camera", "shape": [84, 84, 3]}]
+        return []
+
     def add_channel(self, channel: ObservationChannelConfig) -> None:
         self.channels.append(channel)
 
@@ -253,7 +266,9 @@ class ObservationSpaceDefinition:
         return {
             "channels": [c.to_dict() for c in self.channels],
             "flatten_vector": self.flatten_vector,
-            "include_image_channel": self.include_image_channel,
+            # legacy flag kept in sync for older consumers
+            "include_image_channel": bool(self.image_channel_specs()),
+            "image_channels": [dict(spec) for spec in self.image_channel_specs()],
         }
 
     @classmethod
@@ -263,7 +278,8 @@ class ObservationSpaceDefinition:
         return cls(
             channels=channels,
             flatten_vector=bool(data.get("flatten_vector", True)),
-            include_image_channel=bool(data.get("include_image_channel", False))
+            include_image_channel=bool(data.get("include_image_channel", False)),
+            image_channels=[dict(s) for s in data.get("image_channels", [])]
         )
 
     def export_schema(self) -> Dict[str, Any]:
@@ -274,7 +290,8 @@ class ObservationSpaceDefinition:
         return {
             "flatten_vector": self.flatten_vector,
             "vector_dimension": vector_dim,
-            "include_image": self.include_image_channel,
+            "include_image": bool(self.image_channel_specs()),
+            "image_channels": [dict(s) for s in self.image_channel_specs()],
             "num_channels": len(active),
             "channels": [
                 {
@@ -307,7 +324,9 @@ class CompiledObservationPipeline:
     def __init__(self, definition: ObservationSpaceDefinition):
         self.definition = definition
         self.flatten_vector = definition.flatten_vector
-        self.include_image = definition.include_image_channel
+        # Effective named camera channels (legacy flag degrades to one)
+        self.image_specs = definition.image_channel_specs()
+        self.include_image = bool(self.image_specs)
 
         # Security assertion
         is_safe, violations = definition.validate_no_leakage()
@@ -385,14 +404,13 @@ class CompiledObservationPipeline:
                     idx += expected_len
 
             if self.include_image:
-                cam_sample = sensor_samples.get("rgb_camera", None)
-                img = cam_sample if (isinstance(cam_sample, np.ndarray) and cam_sample.ndim == 3) else np.zeros((84, 84, 3), dtype=np.uint8)
+                images = self._extract_images(sensor_samples)
                 if self.total_dim == 0:
-                    return img
-                return {
-                    "vector": self.buffer.copy(),
-                    "image": img
-                }
+                    return next(iter(images.values())) \
+                        if len(images) == 1 else images
+                out = {"vector": self.buffer.copy()}
+                out.update(images)
+                return out
 
             return self.buffer.copy()
 
@@ -417,8 +435,24 @@ class CompiledObservationPipeline:
                     obs_dict[c.name] = np.nan_to_num(vec, nan=0.0)
 
             if self.include_image:
-                cam_sample = sensor_samples.get("rgb_camera", None)
-                img = cam_sample if (isinstance(cam_sample, np.ndarray) and cam_sample.ndim == 3) else np.zeros((84, 84, 3), dtype=np.uint8)
-                obs_dict["image"] = img
+                obs_dict.update(self._extract_images(sensor_samples))
 
             return obs_dict
+
+    @staticmethod
+    def _image_key(sensor_name: str) -> str:
+        # "rgb_camera" keeps the legacy "image" contract key; every other
+        # camera gets its own deterministic image_<name> key.
+        return "image" if sensor_name == "rgb_camera" else f"image_{sensor_name}"
+
+    def _extract_images(self, sensor_samples: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for spec in self.image_specs:
+            name = spec["name"]
+            shape = spec.get("shape") or [84, 84, 3]
+            sample = sensor_samples.get(name, None)
+            img = sample if (isinstance(sample, np.ndarray)
+                             and sample.ndim == 3) \
+                else np.zeros(tuple(shape), dtype=np.uint8)
+            out[self._image_key(name)] = img
+        return out

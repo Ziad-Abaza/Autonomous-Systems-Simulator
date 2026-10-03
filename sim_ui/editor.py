@@ -42,6 +42,7 @@ class VisualTrackEditor:
         self.active_tool: Optional[str] = None
 
         self._pan_start = (0, 0)
+        self.hover_pos: Tuple[int, int] = (0, 0)
         self._orig_view_offset = (0.0, 0.0)
         self._drag_start_pos = (0.0, 0.0)
 
@@ -267,6 +268,21 @@ class VisualTrackEditor:
                     self._changed()
                     return True
 
+        # 3b. Draw tool: click near the FIRST point of an open track closes
+        #     the loop — checked before spawn/entity hit-tests because the
+        #     start marker sits on top of cp0 in default templates, and in
+        #     draw mode the closure gesture takes priority.
+        if (button == 1 and self.tool == "draw"
+                and not self.road_def.is_closed
+                and len(self.road_def.control_points) >= 3):
+            cp0 = self.road_def.control_points[0]
+            s0x, s0y = self.world_to_screen(cp0.x, cp0.y)
+            if (pos[0] - s0x) ** 2 + (pos[1] - s0y) ** 2 <= 14 * 14:
+                self.road_def.is_closed = True
+                self.deselect_all()
+                self._changed()
+                return True
+
         # 4. Check click on Spawn Point
         sp = self.road_def.spawn_point
         sp_sx, sp_sy = self.world_to_screen(sp.x, sp.y)
@@ -365,6 +381,7 @@ class VisualTrackEditor:
         self.view_offset_y = -(ay - cy) / self.zoom - wy
 
     def handle_mouse_move(self, pos: Tuple[int, int]) -> None:
+        self.hover_pos = pos
         if self.is_panning:
             dx = (pos[0] - self._pan_start[0]) / self.zoom
             dy = -(pos[1] - self._pan_start[1]) / self.zoom
@@ -504,8 +521,16 @@ class VisualTrackEditor:
                     ay = int(cy - tan_2d.y * arr_len)
                     pygame.draw.line(surface, cp_color, (cx, cy), (ax, ay), 2)
 
-                    # Gate badge
-                    badge = font.render(f"CP {cp['index']}", True, cp_color)
+                    # Gate badge — the LAST gate of an open route is the
+                    # finish line (course_completed on crossing)
+                    is_finish = (not self.road_def.is_closed
+                                 and cp['index'] == len(checkpoints) - 1)
+                    if is_finish:
+                        cp_color = T.C.warn
+                        pygame.draw.line(surface, cp_color,
+                                         (slx, sly), (srx, sry), 3)
+                    badge_txt = "FINISH" if is_finish else f"CP {cp['index']}"
+                    badge = font.render(badge_txt, True, cp_color)
                     surface.blit(badge, (srx + 6, sry - 8))
 
         # 4. Connecting Reference Lines Between Control Points
@@ -580,6 +605,18 @@ class VisualTrackEditor:
         pygame.draw.line(surface, col_sp, (spx, spy), (ax, ay), 3)
         lbl_sp = font.render(f"SPAWN ({math.degrees(sp.yaw):.0f}°)", True, col_sp)
         surface.blit(lbl_sp, (spx + 14, spy - 24))
+
+        # 7b. Draw-tool endpoint affordance: cursor near the first point of
+        # an open track → snap ring + explicit "Close Track" hint
+        if (self.tool == "draw" and not self.road_def.is_closed
+                and len(self.road_def.control_points) >= 3):
+            cp0 = self.road_def.control_points[0]
+            s0x, s0y = self.world_to_screen(cp0.x, cp0.y)
+            hx, hy = getattr(self, "hover_pos", (0, 0))
+            if (hx - s0x) ** 2 + (hy - s0y) ** 2 <= 22 * 22:
+                pygame.draw.circle(surface, T.C.warn, (s0x, s0y), 16, 2)
+                hint = font.render("Close Track", True, T.C.warn)
+                surface.blit(hint, (s0x + 20, s0y - 22))
 
         # 8. Active Tool Banner
         if self.active_tool:

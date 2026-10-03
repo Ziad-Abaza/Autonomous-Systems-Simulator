@@ -209,6 +209,63 @@ mup()
 check("entity drag moves it",
       abs(ent.pos.x - ox) > 0.1 or abs(ent.pos.y - oy) > 0.1)
 
+# ---- Phase 7.5: Loop toggle closes an open track
+was_closed = ed.road_def.is_closed
+click_action("ed_loop")
+check("Loop toggle flips topology",
+      ed.road_def.is_closed != was_closed)
+
+# ---- Phase 7.5: draw tool closes loop at first point
+if ed.road_def.is_closed:
+    click_action("ed_loop")  # back to open
+ed.tool = "draw"
+cp0 = ed.road_def.control_points[0]
+s0 = ed.world_to_screen(cp0.x, cp0.y)
+mdown((int(s0[0]) + 2, int(s0[1]) + 1))
+mup()
+check("draw click on first point closes track",
+      ed.road_def.is_closed is True)
+ed.tool = "select"
+click_action("ed_loop")  # reopen for remaining checks
+ed.tool = "select"
+
+# ---- Phase 7.5: entity editing via inspector properties
+insp = app.inspector
+ent0 = ed.entities[0] if ed.entities else None
+if ent0 is not None:
+    insp.select_entity(ent0.entity_id)
+    ex0 = ent0.pos.x
+    insp.handle_property_change("ent_pos_x", 5.0)
+    check("inspector entity edit mutates position",
+          abs(ent0.pos.x - (ex0 + 5.0)) < 1e-6)
+else:
+    check("inspector entity edit mutates position", False)
+
+# ---- Phase 7.5: SENSORS tab — add second camera
+frame()
+if click_action("tab_SENSORS"):
+    frame()
+    n_cams = len([c for c in insp.agent.sensor_configs
+                  if c.sensor_type == "camera_rgb"])
+    click_action("prop_act_sen_add_camera")
+    check("SENSORS add camera",
+          len([c for c in insp.agent.sensor_configs
+               if c.sensor_type == "camera_rgb"]) == n_cams + 1)
+    # camera registered as an image channel in the obs contract
+    names = [s["name"] for s in
+             insp.agent.observation_space.image_channel_specs()]
+    new_cam = [c for c in insp.agent.sensor_configs
+               if c.sensor_type == "camera_rgb"][-1]
+    check("camera in observation contract", new_cam.name in names)
+    # runtime suite was rebuilt with the new camera
+    check("runtime sensor rebuilt",
+          new_cam.name in app.env.sensors.sensors)
+else:
+    check("SENSORS tab exists", False)
+    check("SENSORS add camera", False)
+    check("camera in observation contract", False)
+    check("runtime sensor rebuilt", False)
+
 # ---- save via Ctrl+S
 key(pygame.K_s, pygame.KMOD_CTRL)
 check("save clears dirty", not app.dirty)

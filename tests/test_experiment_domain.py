@@ -347,7 +347,12 @@ class TestTrainerContract:
         assert errors == []
         assert contract["contract_version"] == TRAINER_CONTRACT_VERSION
         assert contract["experiment_id"] == manifest.experiment_id
-        assert contract["paths"]["run_dir"] == rd
+        assert contract["paths"]["run_dir"] == "."
+        from sim_experiment.trainer_contract import resolve_contract_paths
+        resolved = resolve_contract_paths(contract, rd)
+        assert resolved["paths"]["run_dir"] == os.path.abspath(rd)
+        assert resolved["paths"]["metrics_file"] == os.path.join(
+            os.path.abspath(rd), "metrics.jsonl")
         assert contract["training"]["algorithm"] == "ppo"
         assert contract["seed"] == 42
 

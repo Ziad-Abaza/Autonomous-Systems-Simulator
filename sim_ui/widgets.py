@@ -419,14 +419,33 @@ def text_input(ctx: UIContext, iid: str, rect: pygame.Rect,
                      T.C.accent_line if focused else T.C.border,
                      rect, 1, border_radius=T.RADIUS_SM)
     txt = st["text"]
+    font = ctx.fonts.body
+    avail_w = rect.w - 2 * T.PAD_SM
     if not txt and not focused and placeholder:
-        _draw_text(ctx, ctx.fonts.body, placeholder, T.C.text_faint,
-                   rect.x + T.PAD_SM, rect.centery - 7, max_w=rect.w - 16)
+        _draw_text(ctx, font, placeholder, T.C.text_faint,
+                   rect.x + T.PAD_SM, rect.centery - 7, max_w=avail_w)
     else:
-        _draw_text(ctx, ctx.fonts.body, txt, T.C.text,
-                   rect.x + T.PAD_SM, rect.centery - 7, max_w=rect.w - 16)
+        # Focused inputs scroll horizontally so the caret stays inside the
+        # box; unfocused text is elided to fit.
+        if focused:
+            caret_px = font.size(txt[: st["caret"]])[0]
+            scroll = int(st.get("scroll", 0))
+            if caret_px - scroll > avail_w:
+                scroll = caret_px - avail_w
+            elif caret_px < scroll:
+                scroll = caret_px
+            st["scroll"] = scroll
+            ctx.clip_push(rect.inflate(-2, 0))
+            img = font.render(txt, True, T.C.text)
+            ctx.surface.blit(img, (rect.x + T.PAD_SM - scroll,
+                                   rect.centery - 7))
+            ctx.clip_pop()
+        else:
+            _draw_text(ctx, font, txt, T.C.text,
+                       rect.x + T.PAD_SM, rect.centery - 7, max_w=avail_w)
     if focused:
-        cx = rect.x + T.PAD_SM + ctx.fonts.body.size(txt[: st["caret"]])[0]
+        cx = rect.x + T.PAD_SM + font.size(txt[: st["caret"]])[0] - int(
+            st.get("scroll", 0))
         if int(time.time() * 2.2) % 2 == 0:
             pygame.draw.line(ctx.surface, T.C.text,
                              (cx, rect.y + 5), (cx, rect.bottom - 5), 1)
@@ -447,7 +466,13 @@ def menu_draw(ctx: UIContext, menu_id: str, anchor: pygame.Rect,
         return
     old_z, ctx.z = ctx.z, ctx.Z_MENU
     h = len(items) * 26 + 8
-    rect = pygame.Rect(anchor.x, anchor.bottom + 2, width, h)
+    # keep the dropdown on-screen: clamp horizontally, flip above the
+    # anchor when there is no room below
+    sw, sh = ctx.surface.get_size()
+    x = min(max(0, anchor.x), max(0, sw - width - 4))
+    rect = pygame.Rect(x, anchor.bottom + 2, width, h)
+    if rect.bottom > sh - 4 and anchor.top - 2 - h >= 0:
+        rect.y = anchor.top - 2 - h
     pygame.draw.rect(ctx.surface, T.C.panel_alt, rect, border_radius=T.RADIUS_SM)
     pygame.draw.rect(ctx.surface, T.C.border, rect, 1, border_radius=T.RADIUS_SM)
     ctx.hit(rect, None, kind="block")

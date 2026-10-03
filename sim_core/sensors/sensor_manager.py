@@ -55,3 +55,17 @@ class SensorManager:
         sm.add_sensor(CameraSensor(name="rgb_camera", width=84, height=84, fov_degrees=75.0, update_frequency_hz=30.0))
         sm.add_sensor(IMUSensor(name="imu", update_frequency_hz=60.0))
         return sm
+
+    @classmethod
+    def build_from_configs(cls, configs: List[Any]) -> SensorManager:
+        """Instantiate a suite from declarative SensorConfig objects.
+
+        Disabled and unknown-type configs are skipped. When nothing is
+        attached at all, callers get an empty suite (validation reports
+        that state separately)."""
+        sm = cls()
+        for cfg in configs or []:
+            sensor = cfg.build_sensor() if hasattr(cfg, "build_sensor") else None
+            if sensor is not None:
+                sm.add_sensor(sensor)
+        return sm

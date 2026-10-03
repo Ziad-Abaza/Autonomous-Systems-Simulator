@@ -65,7 +65,7 @@ class EnvironmentInspector:
     """
     # Two-tier categorized tabs
     CATEGORY_GEO = ["OVERVIEW", "SCENE", "TRACK", "POINT", "ENTITY"]
-    CATEGORY_RL = ["AGENT", "OBS", "ACTION", "REWARD", "TERM", "SCENARIO", "VALIDATE", "TRAIN"]
+    CATEGORY_RL = ["AGENT", "SENSORS", "OBS", "ACTION", "REWARD", "TERM", "SCENARIO", "VALIDATE", "TRAIN"]
     ALL_TABS = CATEGORY_GEO + CATEGORY_RL
 
     # Tab labels — row 1 fits full words; row 2 uses readable
@@ -73,8 +73,9 @@ class EnvironmentInspector:
     TAB_LABELS = {
         "OVERVIEW": "Overview", "SCENE": "Scene", "TRACK": "Track",
         "POINT": "Point", "ENTITY": "Entity",
-        "AGENT": "Agent", "OBS": "Obs", "ACTION": "Act", "REWARD": "Rwd",
-        "TERM": "Trm", "SCENARIO": "Scn", "VALIDATE": "Val", "TRAIN": "Trn",
+        "AGENT": "Agent", "SENSORS": "Sen", "OBS": "Obs", "ACTION": "Act",
+        "REWARD": "Rwd", "TERM": "Trm", "SCENARIO": "Scn",
+        "VALIDATE": "Val", "TRAIN": "Trn",
     }
     TAB_TOOLTIPS = {
         "OBS": "Observation channels — what the agent sees",
@@ -85,6 +86,7 @@ class EnvironmentInspector:
         "VALIDATE": "Environment validation — training readiness gate",
         "TRAIN": "Training & experiments",
         "AGENT": "Agent definition & vehicle",
+        "SENSORS": "Sensors attached to the vehicle — cameras, LiDAR, IMU",
     }
     # Validation issue subsystem → owning tab (click-to-navigate)
     SUBSYSTEM_TAB = {
@@ -156,12 +158,12 @@ class EnvironmentInspector:
             0, min(max_off, off - dy_steps * 48))
 
     def run_validation(self) -> ValidationReport:
-        sensor_names = list(self.sensor_manager.sensors.keys()) if self.sensor_manager else []
+        # Sensor availability comes from the agent's declarative suite —
+        # the runtime SensorManager reference can go stale after a rebuild.
         self.last_validation_report = EnvironmentValidator.validate(
             road_def=self.road_def,
             agent=self.agent,
             entities=self.entities,
-            available_sensors=sensor_names
         )
         return self.last_validation_report
 
@@ -183,6 +185,12 @@ class EnvironmentInspector:
         for ent in self.entities:
             if ent.entity_id == self.selected_entity_id:
                 return ent
+        return None
+
+    def _get_sensor_config(self, name: Optional[str]):
+        for cfg in getattr(self.agent, "sensor_configs", []):
+            if cfg.name == name:
+                return cfg
         return None
 
     def get_properties_for_active_tab(self) -> List[PropertyRow]:
@@ -228,6 +236,92 @@ class EnvironmentInspector:
             props.append(PropertyRow("ag_sensors", "Sensors Bound", "label", f"{len(a.sensor_names)} sensors"))
             props.append(PropertyRow("ag_spawn_speed", "Initial Spawn Speed", "float", a.spawn_config.initial_speed, 0.0, 60.0, 2.0, unit="m/s"))
             props.append(PropertyRow("ag_spawn_jit", "Spawn Lat Jitter", "float", a.spawn_config.lateral_jitter_m, 0.0, 5.0, 0.2, unit="m"))
+
+        # 2b. SENSORS TAB — attached sensor suite (cameras, LiDAR, IMU)
+        elif self.active_tab == "SENSORS":
+            cfgs = getattr(self.agent, "sensor_configs", [])
+            props.append(PropertyRow("sen_head", "--- SENSORS ON VEHICLE ---", "label", ""))
+            for cfg in cfgs:
+                props.append(PropertyRow(
+                    f"sen_en_{cfg.name}",
+                    f"{cfg.name} ({cfg.display_type})", "bool", cfg.enabled))
+                props.append(PropertyRow(
+                    f"sen_sel_{cfg.name}", "  Edit", "action",
+                    "SELECT" if cfg.name != self.selected_sensor_name else "EDITING"))
+            props.append(PropertyRow("sen_add_head", "--- ADD SENSOR ---", "label", ""))
+            props.append(PropertyRow("sen_add_camera", "+ RGB Camera", "action", "ADD"))
+            props.append(PropertyRow("sen_add_lidar", "+ LiDAR", "action", "ADD"))
+            props.append(PropertyRow("sen_add_imu", "+ IMU", "action", "ADD"))
+            props.append(PropertyRow("sen_add_state", "+ Vehicle State", "action", "ADD"))
+
+            sel = self._get_sensor_config(self.selected_sensor_name)
+            if sel is not None:
+                p = sel.merged_params()
+                props.append(PropertyRow("sen_hdr_sel",
+                                         f"--- {sel.name.upper()} ---", "label",
+                                         sel.display_type))
+                props.append(PropertyRow("sen_rate", "Update Rate", "float",
+                                         p.get("update_frequency_hz", 30.0),
+                                         1.0, 120.0, 5.0, unit="Hz"))
+                if sel.sensor_type == "camera_rgb":
+                    props.append(PropertyRow("sen_fov", "FOV", "float",
+                                             p["fov_degrees"], 30.0, 120.0, 5.0, unit="°"))
+                    props.append(PropertyRow("sen_w", "Width", "int",
+                                             p["width"], 32, 512, 16, unit="px"))
+                    props.append(PropertyRow("sen_h", "Height", "int",
+                                             p["height"], 32, 512, 16, unit="px"))
+                    props.append(PropertyRow("sen_posx", "Mount X", "float",
+                                             p["local_pos"][0], -5.0, 5.0, 0.1, unit="m"))
+                    props.append(PropertyRow("sen_posy", "Mount Y", "float",
+                                             p["local_pos"][1], -5.0, 5.0, 0.1, unit="m"))
+                    props.append(PropertyRow("sen_posz", "Mount Z", "float",
+                                             p["local_pos"][2], -5.0, 5.0, 0.1, unit="m"))
+                    props.append(PropertyRow("sen_yaw", "Mount Yaw", "float",
+                                             p["local_yaw"], -180.0, 180.0, 5.0, unit="°"))
+                    props.append(PropertyRow("sen_pitch", "Mount Pitch", "float",
+                                             math.degrees(p["local_pitch"]),
+                                             -90.0, 90.0, 5.0, unit="°"))
+                    props.append(PropertyRow("sen_noise", "Pixel Noise", "float",
+                                             p["noise_std"], 0.0, 0.5, 0.02))
+                    props.append(PropertyRow("sen_latency", "Latency", "float",
+                                             p["latency_seconds"], 0.0, 1.0, 0.02, unit="s"))
+                    in_obs = any(s["name"] == sel.name
+                                 for s in self.agent.observation_space.image_channel_specs())
+                    props.append(PropertyRow("sen_in_obs", "In Observations", "bool", in_obs))
+                elif sel.sensor_type == "lidar_rays":
+                    props.append(PropertyRow("sen_beams", "Beams", "int",
+                                             p["num_rays"], 3, 64, 1))
+                    props.append(PropertyRow("sen_fov", "FOV", "float",
+                                             p["fov_degrees"], 30.0, 360.0, 10.0, unit="°"))
+                    props.append(PropertyRow("sen_range", "Range", "float",
+                                             p["max_range"], 5.0, 200.0, 5.0, unit="m"))
+                    props.append(PropertyRow("sen_posx", "Mount X", "float",
+                                             p["local_pos"][0], -5.0, 5.0, 0.1, unit="m"))
+                    props.append(PropertyRow("sen_posy", "Mount Y", "float",
+                                             p["local_pos"][1], -5.0, 5.0, 0.1, unit="m"))
+                    props.append(PropertyRow("sen_posz", "Mount Z", "float",
+                                             p["local_pos"][2], -5.0, 5.0, 0.1, unit="m"))
+                    props.append(PropertyRow("sen_yaw", "Mount Yaw", "float",
+                                             p["local_yaw"], -180.0, 180.0, 5.0, unit="°"))
+                    props.append(PropertyRow("sen_noise", "Range Noise", "float",
+                                             p["noise_std"], 0.0, 0.5, 0.01, unit="m"))
+                elif sel.sensor_type == "imu":
+                    props.append(PropertyRow("sen_anoise", "Accel Noise", "float",
+                                             p["accel_noise_std"], 0.0, 1.0, 0.01))
+                    props.append(PropertyRow("sen_gnoise", "Gyro Noise", "float",
+                                             p["gyro_noise_std"], 0.0, 1.0, 0.005))
+                    props.append(PropertyRow("sen_drift", "Bias Drift", "float",
+                                             p["bias_drift_rate"], 0.0, 0.1, 0.001))
+                else:
+                    props.append(PropertyRow("sen_noise", "Noise", "float",
+                                             p.get("noise_std", 0.0), 0.0, 1.0, 0.01))
+                    props.append(PropertyRow("sen_latency", "Latency", "float",
+                                             p.get("latency_seconds", 0.0), 0.0, 1.0, 0.02, unit="s"))
+                props.append(PropertyRow("sen_dup", "Duplicate Sensor", "action", "DUPLICATE"))
+                props.append(PropertyRow("sen_remove", "Remove Sensor", "action", "REMOVE"))
+            else:
+                props.append(PropertyRow("sen_none", "No Sensor Selected", "label",
+                                         "Click EDIT beside a sensor"))
 
         # 3. OBSERVATION SPACE DESIGNER TAB
         elif self.active_tab == "OBS":
@@ -439,7 +533,7 @@ class EnvironmentInspector:
         elif self.active_tab == "TRACK":
             r = self.road_def
             b = r.boundary_config
-            props.append(PropertyRow("track_closed", "Is Closed Loop", "bool", r.is_closed))
+            props.append(PropertyRow("track_closed", "Closed Circuit (laps)", "bool", r.is_closed))
             props.append(PropertyRow("track_friction", "Surface Friction", "float", r.default_friction, 0.1, 2.5, 0.05))
             props.append(PropertyRow("track_checkpoints", "Checkpoints", "int", r.num_checkpoints, 4, 64, 2))
             props.append(PropertyRow("b_left_type", "Left Boundary", "enum", b.left_type, options=["guardrail", "wall", "curb", "open"]))
@@ -493,6 +587,137 @@ class EnvironmentInspector:
         if issue is not None:
             self.active_tab = self.SUBSYSTEM_TAB.get(
                 issue.subsystem.lower(), "VALIDATE")
+
+    def _sync_image_channels(self) -> None:
+        """Keep obs-space image channels in sync with enabled cameras."""
+        obs = self.agent.observation_space
+        cams = [c for c in getattr(self.agent, "sensor_configs", [])
+                if c.enabled and c.sensor_type == "camera_rgb"]
+        obs.image_channels = [
+            {"name": c.name,
+             "shape": [int(c.merged_params()["height"]),
+                       int(c.merged_params()["width"]), 3]}
+            for c in cams]
+
+    def _unique_sensor_name(self, base: str) -> str:
+        existing = {c.name for c in getattr(self.agent, "sensor_configs", [])}
+        if base not in existing:
+            return base
+        i = 2
+        while f"{base}_{i}" in existing:
+            i += 1
+        return f"{base}_{i}"
+
+    def _handle_sensor_prop(self, prop_id: str, delta_or_value: Any) -> None:
+        """Mutations for the SENSORS tab — suite edits + per-sensor params."""
+        from sim_env.sensor_config import SensorConfig
+        cfgs = getattr(self.agent, "sensor_configs", [])
+        if cfgs is None:
+            self.agent.sensor_configs = cfgs = []
+
+        if prop_id.startswith("sen_en_"):
+            name = prop_id[len("sen_en_"):]
+            cfg = self._get_sensor_config(name)
+            if cfg is not None:
+                cfg.enabled = not cfg.enabled
+                self._sync_image_channels()
+        elif prop_id.startswith("sen_sel_"):
+            name = prop_id[len("sen_sel_"):]
+            self.selected_sensor_name = name
+        elif prop_id.startswith("sen_add_"):
+            stype = {"sen_add_camera": "camera_rgb",
+                     "sen_add_lidar": "lidar_rays",
+                     "sen_add_imu": "imu",
+                     "sen_add_state": "vehicle_state"}[prop_id]
+            base = {"camera_rgb": "camera", "lidar_rays": "lidar",
+                    "imu": "imu", "vehicle_state": "state"}[stype]
+            name = self._unique_sensor_name(
+                "rgb_camera" if stype == "camera_rgb" and
+                "rgb_camera" not in {c.name for c in cfgs} else base)
+            cfg = SensorConfig.for_type(stype, name)
+            cfgs.append(cfg)
+            self.selected_sensor_name = name
+            self._sync_image_channels()
+        else:
+            cfg = self._get_sensor_config(self.selected_sensor_name)
+            if cfg is None:
+                return
+            p = cfg.params
+            d = delta_or_value or 0.0
+            if prop_id == "sen_remove":
+                cfgs[:] = [c for c in cfgs if c.name != cfg.name]
+                self.selected_sensor_name = cfgs[0].name if cfgs else ""
+                self._sync_image_channels()
+            elif prop_id == "sen_dup":
+                dup = SensorConfig.from_dict(cfg.to_dict())
+                dup.name = self._unique_sensor_name(cfg.name)
+                cfgs.insert(cfgs.index(cfg) + 1, dup)
+                self.selected_sensor_name = dup.name
+                self._sync_image_channels()
+            elif prop_id == "sen_rate":
+                p["update_frequency_hz"] = float(
+                    max(1.0, min(120.0, p.get("update_frequency_hz", 30.0) + d)))
+            elif prop_id == "sen_fov":
+                p["fov_degrees"] = float(
+                    max(10.0, min(360.0, cfg.merged_params()["fov_degrees"] + d)))
+            elif prop_id == "sen_w":
+                p["width"] = int(max(32, min(512,
+                                 cfg.merged_params()["width"] + d)))
+                self._sync_image_channels()
+            elif prop_id == "sen_h":
+                p["height"] = int(max(32, min(512,
+                                  cfg.merged_params()["height"] + d)))
+                self._sync_image_channels()
+            elif prop_id in ("sen_posx", "sen_posy", "sen_posz"):
+                lp = list(p.get("local_pos") or cfg.merged_params()["local_pos"])
+                idx = {"sen_posx": 0, "sen_posy": 1, "sen_posz": 2}[prop_id]
+                lp[idx] = round(lp[idx] + d, 2)
+                p["local_pos"] = lp
+            elif prop_id == "sen_yaw":
+                deg = (cfg.merged_params()["local_yaw"] + d) % 360.0
+                if deg > 180.0:
+                    deg -= 360.0
+                p["local_yaw"] = deg
+            elif prop_id == "sen_pitch":
+                # params store radians; the row displays degrees
+                deg = math.degrees(cfg.merged_params()["local_pitch"]) + d
+                p["local_pitch"] = math.radians(max(-90.0, min(90.0, deg)))
+            elif prop_id == "sen_noise":
+                key = "noise_std"
+                p[key] = round(max(0.0, min(1.0,
+                               cfg.merged_params().get(key, 0.0) + d)), 3)
+            elif prop_id == "sen_latency":
+                p["latency_seconds"] = round(max(0.0, min(1.0,
+                    cfg.merged_params().get("latency_seconds", 0.0) + d)), 3)
+            elif prop_id == "sen_beams":
+                p["num_rays"] = int(max(3, min(64,
+                                    cfg.merged_params()["num_rays"] + d)))
+            elif prop_id == "sen_range":
+                p["max_range"] = float(max(5.0, min(200.0,
+                    cfg.merged_params()["max_range"] + d)))
+            elif prop_id == "sen_anoise":
+                p["accel_noise_std"] = round(max(0.0, min(1.0,
+                    cfg.merged_params()["accel_noise_std"] + d)), 3)
+            elif prop_id == "sen_gnoise":
+                p["gyro_noise_std"] = round(max(0.0, min(1.0,
+                    cfg.merged_params()["gyro_noise_std"] + d)), 4)
+            elif prop_id == "sen_drift":
+                p["bias_drift_rate"] = round(max(0.0, min(0.1,
+                    cfg.merged_params()["bias_drift_rate"] + d)), 4)
+            elif prop_id == "sen_in_obs":
+                obs = self.agent.observation_space
+                specs = obs.image_channel_specs()
+                if any(s["name"] == cfg.name for s in specs):
+                    specs = [s for s in specs if s["name"] != cfg.name]
+                else:
+                    m = cfg.merged_params()
+                    specs.append({"name": cfg.name,
+                                  "shape": [int(m["height"]),
+                                            int(m["width"]), 3]})
+                obs.image_channels = specs
+
+        # Derived name list stays in sync for legacy consumers/validation
+        self.agent.sensor_names = [c.name for c in cfgs if c.enabled]
 
     def handle_property_change(self, prop_id: str, delta_or_value: Any) -> None:
         """Applies property updates directly to underlying data models with validation."""
@@ -577,6 +802,30 @@ class EnvironmentInspector:
             elif prop_id == "vc_friction":
                 vc.tire_friction = round(max(0.2, min(2.5, vc.tire_friction + delta_or_value)), 2)
 
+        # Placed world entity
+        elif prop_id.startswith("ent_"):
+            ent = self.get_selected_entity()
+            if prop_id == "ent_del":
+                if ent is not None and ent in self.entities:
+                    self.entities.remove(ent)
+                    self.selected_entity_id = None
+            elif ent is not None:
+                if prop_id == "ent_pos_x":
+                    ent.pos.x = round(ent.pos.x + delta_or_value, 1)
+                elif prop_id == "ent_pos_y":
+                    ent.pos.y = round(ent.pos.y + delta_or_value, 1)
+                elif prop_id == "ent_yaw":
+                    deg = (math.degrees(ent.yaw) + delta_or_value) % 360.0
+                    if deg > 180.0:
+                        deg -= 360.0
+                    ent.yaw = math.radians(deg)
+                elif prop_id == "ent_col" and hasattr(ent, 'is_collidable'):
+                    ent.is_collidable = not ent.is_collidable
+
+        # Sensor suite (SENSORS tab)
+        elif prop_id.startswith("sen_"):
+            self._handle_sensor_prop(prop_id, delta_or_value)
+
         # Control Point
         elif prop_id.startswith("cp_") and self.selected_point_idx is not None:
             if 0 <= self.selected_point_idx < len(r.control_points):
@@ -655,7 +904,7 @@ class EnvironmentInspector:
         self.run_validation()
 
         # If agent spaces or rules changed, notify runtime to recompile pipelines
-        if prop_id.startswith(("obs_", "act_", "rf_", "term_", "ag_")) and self.on_agent_modified:
+        if prop_id.startswith(("obs_", "act_", "rf_", "term_", "ag_", "sen_")) and self.on_agent_modified:
             self.on_agent_modified()
 
     def draw(

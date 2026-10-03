@@ -31,8 +31,11 @@ class EnvironmentTemplateManager:
     @classmethod
     def list_templates(cls) -> List[Dict[str, str]]:
         return [
-            {"id": "empty", "name": "Empty Environment", "description": "Minimal sandbox with 4 default points ready for custom drawing."},
+            {"id": "empty", "name": "Empty Environment", "description": "Minimal sandbox with a short open route — start drawing your own track."},
             {"id": "basic_driving", "name": "Basic Driving", "description": "High-grip proving ground oval for basic throttle and speed tuning."},
+            {"id": "straight_sprint", "name": "Straight Sprint", "description": "Open 300 m straight route — throttle, brake and top-speed tuning."},
+            {"id": "hairpin", "name": "Hairpin Circuit", "description": "Closed circuit with a tight 180° hairpin for low-speed cornering."},
+            {"id": "slalom", "name": "Cone Slalom", "description": "Open route threading offset cones — lateral control and precision."},
             {"id": "lane_following", "name": "Lane Following", "description": "Technical serpentine circuit with centering and heading rewards."},
             {"id": "obstacle_avoidance", "name": "Obstacle Avoidance", "description": "Circuit with cones and barriers demanding LiDAR collision avoidance."},
         ]
@@ -47,6 +50,12 @@ class EnvironmentTemplateManager:
             return cls._create_basic_driving()
         elif template_id == "lane_following":
             return cls._create_lane_following()
+        elif template_id == "straight_sprint":
+            return cls._create_straight_sprint()
+        elif template_id == "hairpin":
+            return cls._create_hairpin()
+        elif template_id == "slalom":
+            return cls._create_slalom()
         elif template_id == "obstacle_avoidance":
             return cls._create_obstacle_avoidance()
         else:
@@ -116,6 +125,93 @@ class EnvironmentTemplateManager:
         )
 
     @classmethod
+    def _create_straight_sprint(cls) -> EnvironmentProject:
+        road = RoadDefinition(name="Sprint Straight", is_closed=False)
+        pts = [
+            (0.0, 0.0, 0.0, 14.0),
+            (75.0, 0.0, 0.0, 14.0),
+            (150.0, 2.0, 0.0, 14.0),
+            (225.0, -2.0, 0.0, 14.0),
+            (300.0, 0.0, 0.0, 14.0),
+        ]
+        for x, y, z, w in pts:
+            road.add_control_point(x=x, y=y, z=z, width=w, banking=0.0)
+        road.spawn_point = SpawnPoint(x=0.0, y=0.0, z=0.2, yaw=0.0,
+                                      initial_speed=0.0)
+        road.num_checkpoints = 6
+
+        agent = AgentDefinition.create_default_vehicle_agent(
+            agent_id="sprint_agent")
+        return EnvironmentProject(
+            name="Straight Sprint Route",
+            road_def=road,
+            agent=agent
+        )
+
+    @classmethod
+    def _create_hairpin(cls) -> EnvironmentProject:
+        road = RoadDefinition(name="Hairpin Circuit", is_closed=True)
+        # Long straight down, tight 180° hairpin, straight back
+        pts = [
+            (0.0, 0.0, 0.0, 12.0),
+            (60.0, 0.0, 0.0, 12.0),
+            (110.0, 0.0, 0.0, 12.0),
+            (135.0, 8.0, 0.0, 11.0),    # hairpin entry
+            (138.0, 30.0, 0.5, 10.0),   # hairpin apex
+            (120.0, 42.0, 0.5, 11.0),   # hairpin exit
+            (100.0, 40.0, 0.0, 12.0),
+            (50.0, 40.0, 0.0, 12.0),
+            (0.0, 40.0, 0.0, 12.0),
+            (-20.0, 20.0, 0.0, 12.0),
+        ]
+        for x, y, z, w in pts:
+            road.add_control_point(x=x, y=y, z=z, width=w, banking=0.0)
+        road.spawn_point = SpawnPoint(x=0.0, y=0.0, z=0.2, yaw=0.0,
+                                      initial_speed=0.0)
+        road.num_checkpoints = 16
+
+        agent = AgentDefinition.create_default_vehicle_agent(
+            agent_id="hairpin_agent")
+        return EnvironmentProject(
+            name="Hairpin Circuit",
+            road_def=road,
+            agent=agent
+        )
+
+    @classmethod
+    def _create_slalom(cls) -> EnvironmentProject:
+        road = RoadDefinition(name="Cone Slalom", is_closed=False)
+        pts = [
+            (0.0, 0.0, 0.0, 16.0),
+            (40.0, 0.0, 0.0, 16.0),
+            (80.0, 0.0, 0.0, 16.0),
+            (120.0, 0.0, 0.0, 16.0),
+            (160.0, 0.0, 0.0, 16.0),
+            (200.0, 0.0, 0.0, 16.0),
+        ]
+        for x, y, z, w in pts:
+            road.add_control_point(x=x, y=y, z=z, width=w, banking=0.0)
+        road.spawn_point = SpawnPoint(x=0.0, y=0.0, z=0.2, yaw=0.0,
+                                      initial_speed=0.0)
+        road.num_checkpoints = 8
+
+        agent = AgentDefinition.create_default_vehicle_agent(
+            agent_id="slalom_agent")
+        proj = EnvironmentProject(
+            name="Cone Slalom Course",
+            road_def=road,
+            agent=agent
+        )
+        # Offset cones alternating around the centerline
+        offsets = [-4.0, 4.0, -4.0, 4.0, -4.0]
+        proj.entities = [
+            create_entity("cone", pos=Vec3(40.0 + i * 32.0, offsets[i], 0.0),
+                          yaw=0.0)
+            for i in range(len(offsets))
+        ]
+        return proj
+
+    @classmethod
     def _create_obstacle_avoidance(cls) -> EnvironmentProject:
         proj = cls._create_basic_driving()
         proj.name = "Obstacle Avoidance Challenge"
@@ -123,10 +219,10 @@ class EnvironmentTemplateManager:
 
         # Add obstacles to scene
         entities: List[WorldEntity] = [
-            create_entity("cone", Vec3(45.0, 15.0, 0.0), yaw=0.0),
-            create_entity("barrier", Vec3(-40.0, 10.0, 0.0), yaw=0.3),
-            create_entity("cone", Vec3(0.0, 40.0, 0.0), yaw=0.0),
-            create_entity("cone", Vec3(5.0, 41.0, 0.0), yaw=0.0),
+            create_entity("cone", pos=Vec3(45.0, 15.0, 0.0), yaw=0.0),
+            create_entity("barrier", pos=Vec3(-40.0, 10.0, 0.0), yaw=0.3),
+            create_entity("cone", pos=Vec3(0.0, 40.0, 0.0), yaw=0.0),
+            create_entity("cone", pos=Vec3(5.0, 41.0, 0.0), yaw=0.0),
         ]
         proj.entities = entities
 

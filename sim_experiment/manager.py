@@ -26,11 +26,18 @@ from sim_experiment.manifest import ExperimentManifest
 from sim_env.versioning import EnvironmentVersionManager
 
 
+def default_experiments_root() -> str:
+    """Repository experiments root — resolved from this file's location so
+    callers are independent of the process working directory."""
+    return os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "experiments")
+
+
 class ExperimentManager:
     """CRUD + lifecycle service for experiment manifests."""
 
-    def __init__(self, root_dir: str = "experiments"):
-        self.root_dir = os.path.abspath(root_dir)
+    def __init__(self, root_dir: Optional[str] = None):
+        self.root_dir = os.path.abspath(root_dir or default_experiments_root())
         os.makedirs(self.root_dir, exist_ok=True)
 
     # ------------------------------------------------------------ paths
@@ -131,6 +138,12 @@ class ExperimentManager:
                 with open(path, "r", encoding="utf-8") as f:
                     d = json.load(f)
             except (json.JSONDecodeError, OSError):
+                continue
+            # Legacy pre-manifest experiment.json files (written by the
+            # standalone training scripts, not the sim_experiment manager)
+            # have no manifest_version — skip them so they don't appear as
+            # unloadable phantom rows in the UI.
+            if "manifest_version" not in d:
                 continue
             if d.get("archived") and not include_archived:
                 continue

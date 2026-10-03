@@ -12,6 +12,8 @@ from sim_env.observation_designer import ObservationSpaceDefinition
 from sim_env.action_designer import ActionSpaceDefinition
 from sim_env.reward_designer import RewardFunctionDefinition
 from sim_env.termination_designer import TerminationDefinition
+from sim_env.sensor_config import SensorConfig, default_suite_configs, \
+    configs_from_legacy_names
 
 
 @dataclass
@@ -57,6 +59,9 @@ class AgentDefinition:
     name: str = "Autonomous Vehicle Agent"
     entity_type: str = "vehicle"          # Extensible to other domains (e.g. "drone", "robot")
     entity_id: Optional[str] = "vehicle_01"
+    # Full declarative sensor suite — the serialized source of truth.
+    # `sensor_names` is kept as a derived, backward-compatible name list.
+    sensor_configs: List[SensorConfig] = field(default_factory=default_suite_configs)
     sensor_names: List[str] = field(default_factory=lambda: ["vehicle_state", "lidar_rays", "rgb_camera", "imu"])
     observation_space: ObservationSpaceDefinition = field(default_factory=ObservationSpaceDefinition.create_default_space)
     action_space: ActionSpaceDefinition = field(default_factory=ActionSpaceDefinition.create_default_vehicle_action_space)
@@ -72,6 +77,7 @@ class AgentDefinition:
             name="Autonomous Racing Vehicle",
             entity_type="vehicle",
             entity_id="vehicle_01",
+            sensor_configs=default_suite_configs(),
             sensor_names=["vehicle_state", "lidar_rays", "rgb_camera", "imu"],
             observation_space=ObservationSpaceDefinition.create_default_space(),
             action_space=ActionSpaceDefinition.create_default_vehicle_action_space(continuous=True),
@@ -86,7 +92,8 @@ class AgentDefinition:
             "name": self.name,
             "entity_type": self.entity_type,
             "entity_id": self.entity_id,
-            "sensor_names": list(self.sensor_names),
+            "sensor_configs": [s.to_dict() for s in self.sensor_configs],
+            "sensor_names": [s.name for s in self.sensor_configs if s.enabled],
             "observation_space": self.observation_space.to_dict(),
             "action_space": self.action_space.to_dict(),
             "reward_function": self.reward_function.to_dict(),
@@ -102,12 +109,22 @@ class AgentDefinition:
         term_rules = TerminationDefinition.from_dict(data.get("termination_rules", {}))
         spawn_cfg = AgentSpawnConfig.from_dict(data.get("spawn_config", {}))
 
+        # Sensor suite: prefer the full declarative configs; fall back to
+        # the legacy name list for files written before sensor authoring.
+        raw_cfg = data.get("sensor_configs")
+        if raw_cfg:
+            sensor_configs = [SensorConfig.from_dict(s) for s in raw_cfg]
+        else:
+            sensor_configs = configs_from_legacy_names(list(
+                data.get("sensor_names",
+                         ["vehicle_state", "lidar_rays", "rgb_camera", "imu"])))
         return cls(
             agent_id=str(data.get("agent_id", "agent_01")),
             name=str(data.get("name", "Autonomous Vehicle Agent")),
             entity_type=str(data.get("entity_type", "vehicle")),
             entity_id=data.get("entity_id", "vehicle_01"),
-            sensor_names=list(data.get("sensor_names", ["vehicle_state", "lidar_rays", "rgb_camera", "imu"])),
+            sensor_configs=sensor_configs,
+            sensor_names=[s.name for s in sensor_configs if s.enabled],
             observation_space=obs_space,
             action_space=act_space,
             reward_function=reward_fn,

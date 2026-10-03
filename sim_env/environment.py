@@ -77,8 +77,10 @@ class SimulationEnvironment:
         self.obstacles: List[Any] = []
         self.checkpoint_tracker = CheckpointTracker(self.track)
 
-        # Sensors
-        self.sensors = sensor_manager or SensorManager.create_default_sensor_suite()
+        # Sensors — explicit manager wins; then the agent's declarative
+        # sensor suite; then the legacy hardcoded default.
+        self._explicit_sensor_manager = sensor_manager is not None
+        self.sensors = sensor_manager or self._suite_for_agent(agent)
 
         # Phase 3 Declarative Subsystems
         self.agent: Optional[AgentDefinition] = agent
@@ -104,14 +106,7 @@ class SimulationEnvironment:
 
         # Snapshot base sensor noise levels so scenario multipliers are applied
         # idempotently on every reset instead of compounding.
-        self._base_sensor_noise: Dict[str, Dict[str, float]] = {}
-        for s_name, sensor in self.sensors.sensors.items():
-            base: Dict[str, float] = {}
-            for attr in ("noise_std", "accel_noise_std", "gyro_noise_std"):
-                if hasattr(sensor, attr):
-                    base[attr] = float(getattr(sensor, attr))
-            if base:
-                self._base_sensor_noise[s_name] = base
+        self._snapshot_sensor_noise()
 
         # Active physical properties
         fric_mult = self.scenario_def.surface_friction_mult if self.scenario_def else self.scenario.surface_friction_mult
@@ -123,6 +118,25 @@ class SimulationEnvironment:
         self.last_action = [0.0, 0.0, 0.0]
         self.last_termination_reason_dict: Dict[str, Any] = {"reason": "running"}
         self._scenario_time_limit_s: Optional[float] = None
+
+    @staticmethod
+    def _suite_for_agent(agent: Optional[AgentDefinition]) -> "SensorManager":
+        """Builds the runtime sensor suite from an agent's declarative
+        sensor configs (falls back to the default suite when absent)."""
+        cfgs = getattr(agent, "sensor_configs", None)
+        if agent is not None and cfgs:
+            return SensorManager.build_from_configs(cfgs)
+        return SensorManager.create_default_sensor_suite()
+
+    def _snapshot_sensor_noise(self) -> None:
+        self._base_sensor_noise: Dict[str, Dict[str, float]] = {}
+        for s_name, sensor in self.sensors.sensors.items():
+            base: Dict[str, float] = {}
+            for attr in ("noise_std", "accel_noise_std", "gyro_noise_std"):
+                if hasattr(sensor, attr):
+                    base[attr] = float(getattr(sensor, attr))
+            if base:
+                self._base_sensor_noise[s_name] = base
 
     def _apply_sensor_noise_multiplier(self, mult: float) -> None:
         """Scales all sensor noise levels relative to their captured base values."""
@@ -142,8 +156,12 @@ class SimulationEnvironment:
             self.compiled_termination_evaluator = self.agent.termination_rules.compile_evaluator()
 
     def set_agent(self, agent: AgentDefinition) -> None:
-        """Sets active agent definition and compiles runtime pipelines."""
+        """Sets active agent definition, rebuilds its declarative sensor
+        suite, and compiles runtime pipelines."""
         self.agent = agent
+        if not self._explicit_sensor_manager:
+            self.sensors = self._suite_for_agent(agent)
+            self._snapshot_sensor_noise()
         self._compile_agent_pipelines()
 
     def set_scenario(self, scenario_def: Optional[ScenarioDefinition]) -> None:

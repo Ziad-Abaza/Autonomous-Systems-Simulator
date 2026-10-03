@@ -22,7 +22,7 @@ from sim_experiment.curriculum_runtime import (
 from sim_experiment.evaluation import evaluate_policy
 from sim_experiment.headless import build_env_from_dicts
 from sim_experiment.metrics import MetricsWriter
-from sim_experiment.trainer_contract import validate_contract
+from sim_experiment.trainer_contract import validate_contract, resolve_contract_paths
 from sim_env.curriculum import CurriculumDefinition
 
 
@@ -481,10 +481,11 @@ def run_periodic_eval(
 
 
 def load_contract(run_dir: str) -> "tuple[Optional[Dict[str, Any]], Optional[str]]":
-    """Loads + validates contract.json. Returns (contract, error_message)."""
+    """Loads + validates contract.json, resolving paths relative to
+    run_dir. Returns (contract, error_message)."""
     with open(os.path.join(run_dir, "contract.json"), "r", encoding="utf-8") as f:
         contract = json.load(f)
     errors = validate_contract(contract)
     if errors:
         return None, "; ".join(errors)
-    return contract, None
+    return resolve_contract_paths(contract, run_dir), None

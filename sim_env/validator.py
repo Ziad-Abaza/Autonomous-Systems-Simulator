@@ -132,6 +132,47 @@ class EnvironmentValidator:
             else:
                 report.add_info("Track", f"Track contains {road_def.num_checkpoints} checkpoint gates for progress tracking.")
 
+            # Spawn-on-road + heading-alignment checks. These guard against
+            # an instant off_road/wrong_direction termination at reset —
+            # the most confusing authoring failure a user can hit.
+            if len(cps) >= 3:
+                from sim_core.track.spline import TrackSpline
+                spline = TrackSpline(is_closed=road_def.is_closed)
+                spline.build_from_control_points(road_def.to_dict()["control_points"])
+                sp = road_def.spawn_point
+                s, lat, tangent, sp_sample = spline.get_closest_point(Vec2(sp.x, sp.y))
+                half_w = sp_sample.width * 0.5
+                if abs(lat) > half_w:
+                    report.add_error(
+                        "Spawn",
+                        f"Spawn point is {abs(lat) - half_w:.1f}m off the road "
+                        f"(lateral offset {lat:.1f}m, half-width {half_w:.1f}m).",
+                        "Move the Spawn Point onto the road surface, or "
+                        "increase road width at this location.")
+                else:
+                    report.add_info("Spawn",
+                                    "Spawn point lies on the road surface.")
+                heading_err = abs(spline.get_heading_error(sp.yaw, tangent))
+                if heading_err > math.radians(45.0):
+                    report.add_warning(
+                        "Spawn",
+                        f"Spawn heading deviates {math.degrees(heading_err):.0f}° "
+                        "from the track tangent — the vehicle may spawn facing "
+                        "across or against the road.",
+                        "Rotate the spawn yaw toward the road direction, or "
+                        "use the Spawn heading presets in the inspector.")
+                if not road_def.is_closed:
+                    report.add_info(
+                        "Track",
+                        "Open route: course completes when the vehicle crosses "
+                        "the final checkpoint gate.")
+                    if spline.total_length > 0 and spline.total_length < 20.0:
+                        report.add_warning(
+                            "Track",
+                            f"Open route is very short ({spline.total_length:.0f}m) "
+                            "— episodes may end almost immediately.",
+                            "Extend the route to at least ~100m.")
+
         # 3. Action Space Validation
         act_space = agent.action_space
         if act_space is None:
@@ -175,6 +216,15 @@ class EnvironmentValidator:
                         "Sensors",
                         f"Observation channel '{c.name}' requires sensor '{c.source_sensor}', which is not attached to agent.",
                         f"Attach '{c.source_sensor}' to the SensorManager or agent sensor list."
+                    )
+
+            # Named camera image channels must map to an enabled camera
+            for spec in obs_space.image_channel_specs():
+                if spec["name"] not in available_sensors:
+                    report.add_error(
+                        "Sensors",
+                        f"Image channel references camera '{spec['name']}', which is not enabled on the agent.",
+                        "Re-enable the camera or remove it from the observation space."
                     )
 
             # CRITICAL LEAKAGE CHECK
@@ -229,7 +279,18 @@ class EnvironmentValidator:
                             "Move obstacle away from spawn point or adjust spawn location."
                         )
 
-        # 8. Determinism Sanity
+        # 8. Sensor suite integrity
+        cfgs = getattr(agent, "sensor_configs", []) or []
+        seen_names: set = set()
+        for cfg in cfgs:
+            if cfg.name in seen_names:
+                report.add_error(
+                    "Sensors",
+                    f"Duplicate sensor name '{cfg.name}' — sensor outputs would be indistinguishable.",
+                    "Rename or remove the duplicate sensor.")
+            seen_names.add(cfg.name)
+
+        # 9. Determinism Sanity
         report.add_info("Environment", "Simulation clock uses deterministic fixed 60 Hz stepping.")
 
         return report

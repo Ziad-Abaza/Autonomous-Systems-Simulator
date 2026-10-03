@@ -46,8 +46,10 @@ _TRAINER_PREFIX = "sim_experiment.trainers."
 class LocalTrainingOrchestrator:
     """Creates runs, launches trainer subprocesses, monitors and cancels them."""
 
-    def __init__(self, experiments_root: str = "experiments", python_exe: Optional[str] = None):
-        self.experiments_root = os.path.abspath(experiments_root)
+    def __init__(self, experiments_root: Optional[str] = None, python_exe: Optional[str] = None):
+        from sim_experiment.manager import default_experiments_root
+        self.experiments_root = os.path.abspath(
+            experiments_root or default_experiments_root())
         self.python_exe = python_exe or sys.executable
         # Repo root (dir containing the sim_experiment package) — required
         # on sys.path for `-m sim_experiment.trainers.*` to resolve.

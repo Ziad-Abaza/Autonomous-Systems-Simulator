@@ -68,7 +68,9 @@ class StudioSettings:
 
     @theme.setter
     def theme(self, v: str) -> None:
-        self._data["theme"] = "light" if v == "light" else "dark"
+        # Stores the palette id verbatim (e.g. "dark_ocean"); theme.set_theme
+        # resolves unknown ids to the default palette on activation.
+        self._data["theme"] = str(v) if v else "dark"
 
     @property
     def ui_scale(self) -> float:

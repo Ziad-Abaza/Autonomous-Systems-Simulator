@@ -18,7 +18,7 @@ from sim_project.presets import (create_oval_circuit,
 W = int(sys.argv[1]) if len(sys.argv) > 1 else 1280
 H = int(sys.argv[2]) if len(sys.argv) > 2 else 720
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "docs", "phase7_shots")
+                   "assets", "screenshots", "qa")
 os.makedirs(OUT, exist_ok=True)
 
 app = SimulationStudioApp(width=W, height=H, headless=False, port=8799)
@@ -76,10 +76,27 @@ app.open_project(create_oval_circuit(), None)
 app.ws_tab = "EDIT"
 shot("e1_edit_oval")
 
-for tab in ["OVERVIEW", "TRACK", "POINT", "AGENT", "OBS", "REWARD",
-            "VALIDATE", "TRAIN"]:
+for tab in ["OVERVIEW", "TRACK", "POINT", "AGENT", "SENSORS", "OBS",
+            "REWARD", "VALIDATE", "TRAIN"]:
     app.inspector.active_tab = tab
     shot(f"e2_insp_{tab.lower()}")
+
+# SENSORS tab with a second camera added — exercises sensor authoring rows
+insp = app.inspector
+insp.active_tab = "SENSORS"
+insp.handle_property_change("sen_add_camera", None)
+insp.handle_property_change("sen_yaw", 90.0)
+shot("e2_insp_sensors_two_cams")
+
+# open-route project — FINISH gate marker + Open/Closed toolbar state
+from sim_env.templates import EnvironmentTemplateManager
+app.open_project(EnvironmentTemplateManager.create_project_from_template(
+    "straight_sprint"), None)
+app.track_editor.frame_all()
+shot("e5_open_route_finish")
+
+# restore oval for the remaining shots
+app.open_project(create_oval_circuit(), None)
 
 # serpentine — framing stress test
 app.open_project(create_serpentine_track(), None)

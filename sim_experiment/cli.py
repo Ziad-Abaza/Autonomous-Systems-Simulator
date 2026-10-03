@@ -520,8 +520,9 @@ def cmd_benchmark(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sim_experiment.cli",
                                 description="Training & Experiment Platform CLI")
-    p.add_argument("--root", default="experiments",
-                   help="Experiments root directory (default: experiments/)")
+    from sim_experiment.manager import default_experiments_root
+    p.add_argument("--root", default=default_experiments_root(),
+                   help="Experiments root directory (default: <repo>/experiments)")
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("validate-env")
@@ -618,7 +619,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=9100)
     s.add_argument("--token", required=True)
-    s.add_argument("--worker-root", default="experiments")
+    s.add_argument("--worker-root",
+                   default=default_experiments_root())
     s.set_defaults(fn=cmd_worker_serve)
 
     s = sub.add_parser("worker-status")

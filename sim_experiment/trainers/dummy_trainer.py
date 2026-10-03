@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from sim_experiment.metrics import MetricsWriter
 from sim_experiment.artifacts import ArtifactRegistry
-from sim_experiment.trainer_contract import validate_contract
+from sim_experiment.trainer_contract import validate_contract, resolve_contract_paths
 
 
 def _write_result(run_dir: str, status: str, **kwargs) -> None:
@@ -48,6 +48,7 @@ def main() -> int:
         if errors:
             _write_result(rd, "failed", error={"type": "invalid_contract", "message": "; ".join(errors)})
             return 2
+        contract = resolve_contract_paths(contract, rd)
 
         training = contract["training"]
         total = int(training.get("total_timesteps", 100))

@@ -89,3 +89,7 @@ studio_settings.json
 # Internal docs & dev evidence
 docs/
 
+
+# Phase 7.5 QA screenshot evidence (kept on disk, not tracked)
+assets/screenshots/qa/
+

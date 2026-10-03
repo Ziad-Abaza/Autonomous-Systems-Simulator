@@ -232,7 +232,10 @@ class SimulationHUD:
         pygame.draw.rect(surface, (18, 22, 30, 230), (x, y, w, h + 24), border_radius=6)
         pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h + 24), 1, border_radius=6)
 
-        surface.blit(fonts['bold'].render("CAMERA SENSOR", True, (0, 200, 255)), (x + 10, y + 6))
+        label = getattr(camera_sensor, "name", "camera").replace(
+            "_", " ").upper()
+        surface.blit(fonts['bold'].render(label, True, (0, 200, 255)),
+                     (x + 10, y + 6))
 
         if camera_sensor and hasattr(camera_sensor, '_last_image') and camera_sensor._last_image is not None:
             img = camera_sensor._last_image

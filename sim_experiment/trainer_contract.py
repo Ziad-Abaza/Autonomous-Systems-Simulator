@@ -36,8 +36,19 @@ def build_contract(
     tcp_host: str = "127.0.0.1",
     resume: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Materializes the trainer contract for one run."""
+    """Materializes the trainer contract for one run.
+
+    All paths are written *relative to run_dir* so the contract (and the
+    whole run directory) stays portable — exports and copies never carry
+    stale absolute paths from the machine that created them.
+    """
     run_dir = os.path.abspath(run_dir)
+
+    def _rel(path: str) -> str:
+        return os.path.relpath(os.path.abspath(path), run_dir).replace(
+            os.sep, "/")
+
+    experiment_dir = os.path.abspath(experiment_dir)
     return {
         "contract_version": TRAINER_CONTRACT_VERSION,
         "experiment_id": manifest.experiment_id,
@@ -60,17 +71,17 @@ def build_contract(
         "env_mode": env_mode,
         "tcp": {"host": tcp_host, "ports": list(tcp_ports or [])},
         "paths": {
-            "experiment_dir": os.path.abspath(experiment_dir),
-            "run_dir": run_dir,
-            "environment_json": os.path.join(os.path.abspath(experiment_dir), "environment.json"),
-            "scenario_json": os.path.join(os.path.abspath(experiment_dir), "scenario.json"),
-            "metrics_file": os.path.join(run_dir, "metrics.jsonl"),
-            "checkpoints_dir": os.path.join(run_dir, "checkpoints"),
-            "evaluation_dir": os.path.join(run_dir, "evaluation"),
-            "trajectories_dir": os.path.join(run_dir, "trajectories"),
-            "replays_dir": os.path.join(run_dir, "replays"),
-            "logs_dir": os.path.join(run_dir, "logs"),
-            "run_result": os.path.join(run_dir, "run_result.json"),
+            "experiment_dir": _rel(experiment_dir),
+            "run_dir": ".",
+            "environment_json": _rel(os.path.join(experiment_dir, "environment.json")),
+            "scenario_json": _rel(os.path.join(experiment_dir, "scenario.json")),
+            "metrics_file": "metrics.jsonl",
+            "checkpoints_dir": "checkpoints",
+            "evaluation_dir": "evaluation",
+            "trajectories_dir": "trajectories",
+            "replays_dir": "replays",
+            "logs_dir": "logs",
+            "run_result": "run_result.json",
         },
         "resume": dict(resume) if resume else None,
         "capabilities": ["metrics_jsonl", "checkpoints", "evaluation", "trajectories", "replays"],
@@ -113,3 +124,26 @@ def validate_contract(contract: Dict[str, Any]) -> List[str]:
         # (SET_SCENARIO). The contract no longer rejects the combination;
         # the runtime fails explicitly if a simulator doesn't support it.
     return errors
+
+
+def resolve_contract_paths(contract: Dict[str, Any],
+                           run_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Resolves the contract's run-relative paths to absolute paths.
+
+    ``run_dir`` defaults to the directory containing contract.json's own
+    ``paths.run_dir`` resolved against the caller — pass the directory
+    that holds contract.json. Both relative (portable, current format)
+    and absolute (legacy) path values are handled.
+    """
+    base = os.path.abspath(run_dir) if run_dir else os.getcwd()
+    paths = dict(contract.get("paths", {}))
+    resolved: Dict[str, str] = {}
+    for key, val in paths.items():
+        if isinstance(val, str):
+            resolved[key] = val if os.path.isabs(val) \
+                else os.path.abspath(os.path.join(base, val))
+        else:
+            resolved[key] = val
+    out = dict(contract)
+    out["paths"] = resolved
+    return out

@@ -165,7 +165,7 @@ class BatchScheduler:
 
     def __init__(
         self,
-        experiments_root: str = "experiments",
+        experiments_root: Optional[str] = None,
         max_workers: int = 2,
         orchestrator: Optional[LocalTrainingOrchestrator] = None,
         workers: Optional[List[Worker]] = None,
@@ -174,7 +174,9 @@ class BatchScheduler:
     ):
         self.heartbeat_interval_s = float(heartbeat_interval_s)
         self.lease_ttl_s = float(lease_ttl_s)
-        self.experiments_root = os.path.abspath(experiments_root)
+        from sim_experiment.manager import default_experiments_root
+        self.experiments_root = os.path.abspath(
+            experiments_root or default_experiments_root())
         # Persistent worker registry (experiments_root/workers/registry.json)
         # — survives scheduler restarts; reconnecting worker_ids reuse records.
         from sim_experiment.worker_registry import WorkerRegistry

@@ -49,6 +49,8 @@ class EditorUI:
         self.show_outline = True
         self.show_inspector = True
         self.canvas_rect = pygame.Rect(0, 0, 100, 100)
+        self._place_anchor = pygame.Rect(0, 0, 0, 0)
+        self._view_anchor = pygame.Rect(0, 0, 0, 0)
 
     # ------------------------------------------------------------ layout
 
@@ -92,14 +94,30 @@ class EditorUI:
         if getattr(ed, "_needs_frame", False):
             ed._needs_frame = False
             ed.frame_all()
-        checkpoints = getattr(self.app.env, "checkpoint_manager", None)
-        gates = checkpoints.checkpoints if checkpoints else None
+        gates = (self.app.env.track.checkpoints
+                 if self.app.env.track else None)
         ed.draw_editor(ctx.surface, cv, ctx.fonts.small,
                        self.app.env.track.spline if self.app.env.track else None,
                        gates)
 
         self._draw_inspector(ctx, lay["inspector"])
         self._draw_status(ctx, lay["status"])
+        # Dropdowns must paint LAST — they hang below the toolbar into the
+        # outline/canvas region, which would otherwise cover them.
+        self._draw_menus(ctx)
+
+    def _draw_menus(self, ctx: UIContext) -> None:
+        ed = self.app.track_editor
+        menu_draw(ctx, "ed_place", self._place_anchor,
+                  [(lbl, "ed_place", tid) for lbl, tid in PLACE_ITEMS],
+                  width=150)
+        view_state = {"view_grid": ed.show_grid,
+                      "view_curv": ed.show_curvature,
+                      "view_tang": ed.show_tangents,
+                      "view_width": ed.show_width_handles}
+        items = [(("✓ " if view_state[a] else "   ") + lbl, a, None)
+                 for lbl, a in VIEW_ITEMS]
+        menu_draw(ctx, "ed_view", self._view_anchor, items, width=150)
 
     # ------------------------------------------------------------ toolbar
 
@@ -130,9 +148,7 @@ class EditorUI:
                             [(b.right - 16, b.centery - 3),
                              (b.right - 8, b.centery - 3),
                              (b.right - 12, b.centery + 3)])
-        menu_draw(ctx, "ed_place", b,
-                  [(lbl, "ed_place", tid) for lbl, tid in PLACE_ITEMS],
-                  width=150)
+        self._place_anchor = b
         x += 78
         x += 8
         # snap + grid
@@ -152,6 +168,17 @@ class EditorUI:
         b = pygame.Rect(x, r.y + 4, 62, h)
         button(ctx, b, "Fit Sel", "ed_frame_sel", tooltip="Frame selection (F)")
         x += 70
+        # loop toggle — explicit track topology (open route ↔ closed circuit)
+        can_close = len(ed.road_def.control_points) >= 3
+        loop_lbl = "Closed" if ed.road_def.is_closed else "Open"
+        b = pygame.Rect(x, r.y + 4, 64, h)
+        button(ctx, b, loop_lbl, "ed_loop",
+               style="primary" if ed.road_def.is_closed else "default",
+               enabled=can_close,
+               tooltip="Closed circuit (laps)" if ed.road_def.is_closed
+               else "Open route — click to close the loop")
+        x += 68
+        x += 6
         # view menu
         b = pygame.Rect(x, r.y + 4, 62, h)
         button(ctx, b, "View", "ed_view_menu", tooltip="Visualization toggles")
@@ -159,13 +186,7 @@ class EditorUI:
                             [(b.right - 16, b.centery - 3),
                              (b.right - 8, b.centery - 3),
                              (b.right - 12, b.centery + 3)])
-        view_state = {"view_grid": ed.show_grid,
-                      "view_curv": ed.show_curvature,
-                      "view_tang": ed.show_tangents,
-                      "view_width": ed.show_width_handles}
-        items = [(("✓ " if view_state[a] else "   ") + lbl, a, None)
-                 for lbl, a in VIEW_ITEMS]
-        menu_draw(ctx, "ed_view", b, items, width=150)
+        self._view_anchor = b
         x += 70
 
         # right side: zoom
@@ -319,7 +340,8 @@ class EditorUI:
         elif action == "ed_place_menu":
             app.ui_ctx.open_menu_id = "ed_place" if app.ui_ctx.open_menu_id != "ed_place" else None
         elif action == "ed_place":
-            ed.active_tool = payload if payload != "spawn" else "spawn"
+            ed.active_tool = payload
+            app.ui_ctx.open_menu_id = None
         elif action == "ed_view_menu":
             app.ui_ctx.open_menu_id = "ed_view" if app.ui_ctx.open_menu_id != "ed_view" else None
         elif action == "ed_snap":
@@ -332,6 +354,14 @@ class EditorUI:
             ed.show_tangents = not ed.show_tangents
         elif action == "view_width":
             ed.show_width_handles = not ed.show_width_handles
+        elif action == "ed_loop":
+            ed = self.app.track_editor
+            if len(ed.road_def.control_points) >= 3:
+                ed.road_def.is_closed = not ed.road_def.is_closed
+                self.app._editor_changed()
+                self.app._status(
+                    "Closed circuit" if ed.road_def.is_closed
+                    else "Open route", "ok")
         elif action == "ed_frame_all":
             ed.frame_all()
         elif action == "ed_frame_sel":

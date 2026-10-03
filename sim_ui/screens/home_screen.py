@@ -15,7 +15,7 @@ ExperimentManager, dataset inspection — never from internals.
 from __future__ import annotations
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pygame
 
@@ -23,7 +23,7 @@ from sim_ui import theme as T
 from sim_ui.widgets import (
     UIContext, panel, button, icon_button, label, nav_item, list_row,
     section_label, text_input, scroll_begin, scroll_end, menu_draw,
-    divider, _draw_text, toggle,
+    divider, _draw_text,
 )
 from sim_ui.thumbnails import thumbnail_for_file
 from sim_project.library import TrackAsset
@@ -64,6 +64,9 @@ class HomeScreen:
         self._thumbs: Dict[str, Optional[pygame.Surface]] = {}
         self._exp_detail: Optional[str] = None
         self._ds_detail: Optional[str] = None
+        # (anchor_rect, asset) for the card dropdown — drawn AFTER
+        # scroll_end so the menu is neither clipped nor painted over
+        self._open_card_menu = None
 
     # ------------------------------------------------------------ helpers
 
@@ -183,6 +186,11 @@ class HomeScreen:
                 continue
             self._draw_card(ctx, pygame.Rect(cx, cy, self.CARD_W, self.CARD_H), a)
         scroll_end(ctx, "tracks_grid", area)
+        if self._open_card_menu:
+            anchor, a = self._open_card_menu
+            self._open_card_menu = None
+            menu_draw(ctx, f"card:{a.path}", anchor,
+                      self._card_menu_items(a))
 
     def _draw_card(self, ctx: UIContext, r: pygame.Rect,
                    a: TrackAsset) -> None:
@@ -232,14 +240,19 @@ class HomeScreen:
                "Open", "open_track", a.path, style="primary")
         icon_button(ctx, pygame.Rect(r.right - 26, r.bottom - 34, 22, 26),
                     "...", "card_menu", a.path, tooltip="Track actions")
-        menu_draw(ctx, f"card:{a.path}",
-                  pygame.Rect(r.right - 26, r.bottom - 34, 22, 26),
-                  [("Open", "m_open", a.path),
-                   ("Favorite" if not a.favorite else "Unfavorite", "m_fav", a.path),
-                   ("Rename…", "m_rename", a.path),
-                   ("Duplicate", "m_dup", a.path),
-                   ("Reveal in Folder", "m_reveal", a.path),
-                   ("Delete…", "m_del", a.path)])
+        if ctx.open_menu_id == f"card:{a.path}":
+            self._open_card_menu = (
+                pygame.Rect(r.right - 26, r.bottom - 34, 22, 26), a)
+
+    @staticmethod
+    def _card_menu_items(a: TrackAsset) -> List[Tuple[str, str, Any]]:
+        return [("Open", "m_open", a.path),
+                ("Favorite" if not a.favorite else "Unfavorite",
+                 "m_fav", a.path),
+                ("Rename…", "m_rename", a.path),
+                ("Duplicate", "m_dup", a.path),
+                ("Reveal in Folder", "m_reveal", a.path),
+                ("Delete…", "m_del", a.path)]
 
     # ------------------------------------------------------------ recent
 
@@ -317,9 +330,18 @@ class HomeScreen:
         y = y0 + 50
 
         _draw_text(ctx, ctx.fonts.bold, "Theme", T.C.text, x0, y)
-        toggle(ctx, pygame.Rect(x0 + 200, y - 4, 300, 24),
-               "Light theme", s.theme == "light", "set_theme_toggle")
-        y += 40
+        y += 26
+        card_w, card_h, card_gap = 128, 42, 10
+        for mode, mode_label in (("dark", "DARK"), ("light", "LIGHT")):
+            _draw_text(ctx, ctx.fonts.caption, mode_label, T.C.text_faint,
+                       x0, y + 12)
+            x = x0 + 64
+            for p in T.list_palettes(mode):
+                r = pygame.Rect(x, y, card_w, card_h)
+                self._palette_card(ctx, r, p, active=(s.theme == p["id"]))
+                x += card_w + card_gap
+            y += card_h + 12
+        y += 8
 
         _draw_text(ctx, ctx.fonts.bold, "Data root", T.C.text, x0, y)
         _draw_text(ctx, ctx.fonts.small, s.data_root, T.C.text_dim,
@@ -342,10 +364,37 @@ class HomeScreen:
                    "Changes apply immediately and persist in "
                    "studio_settings.json.", T.C.text_faint, x0, y + 8)
 
+    def _palette_card(self, ctx: UIContext, r: pygame.Rect,
+                      p: Dict[str, Any], active: bool) -> None:
+        """Theme swatch card — name + mini color chips of the palette."""
+        cols = p["colors"]
+        pygame.draw.rect(ctx.surface, T.C.panel, r, border_radius=T.RADIUS_SM)
+        pygame.draw.rect(ctx.surface,
+                         T.C.accent_line if active else T.C.border,
+                         r, 2 if active else T.BORDER_W,
+                         border_radius=T.RADIUS_SM)
+        _draw_text(ctx, ctx.fonts.small, p["name"],
+                   T.C.text if active else T.C.text_dim,
+                   r.x + 8, r.y + 5, max_w=r.w - 16)
+        chip_w = 16
+        cx = r.x + 8
+        for token in ("bg_deep", "panel", "accent", "selection"):
+            col = cols.get(token, (255, 0, 255))
+            chip = pygame.Rect(cx, r.bottom - 17, chip_w, 10)
+            pygame.draw.rect(ctx.surface, col, chip, border_radius=2)
+            pygame.draw.rect(ctx.surface, T.C.border_soft, chip, 1,
+                             border_radius=2)
+            cx += chip_w + 5
+        ctx.hit(r, "set_theme", p["id"],
+                tooltip=f"Apply {p['name']} palette")
+
     # -------------------------------------------------------------- actions
 
     def on_action(self, action: str, payload: Any) -> bool:
         app = self.app
+        # card-menu items are one-shot actions — close the dropdown
+        if action.startswith("m_"):
+            app.ui_ctx.open_menu_id = None
         if action == "nav":
             self.section = str(payload).upper()
         elif action == "sort_cycle":
@@ -388,12 +437,11 @@ class HomeScreen:
             app.active_dialog = "confirm_delete"
             app.dialog_payload = {"path": payload,
                                   "name": a.name if a else payload}
-        elif action == "set_theme_toggle":
+        elif action == "set_theme":
             s = app.settings
-            s.theme = "light" if s.theme == "dark" else "dark"
+            s.theme = str(payload)
             s.save()
-            import sim_ui.theme as _t
-            _t.set_theme(s.theme)
+            T.set_theme(s.theme)
         elif action == "set_data_root":
             app.choose_data_root()
         elif action == "set_ui_scale":
