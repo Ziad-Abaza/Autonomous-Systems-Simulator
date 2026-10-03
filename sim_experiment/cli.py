@@ -44,6 +44,10 @@ from sim_experiment.reproduce import check_reproducibility
 from sim_experiment.headless import build_env_from_dicts, HeadlessEnvPool
 from sim_experiment.evaluation import evaluate_policy, make_policy_from_checkpoint
 from sim_experiment.artifacts import ArtifactRegistry
+from sim_experiment.capabilities import TRAINER_CAPABILITIES
+from sim_experiment.scheduler import BatchScheduler, RetryPolicy
+from sim_experiment.analytics import compare_runs, compare_experiments, list_run_dirs
+from sim_experiment.dataset import export_dataset, list_episodes
 
 
 def _mgr(args) -> ExperimentManager:
@@ -157,6 +161,104 @@ def cmd_batch(args) -> int:
     return 0
 
 
+def cmd_trainers(args) -> int:
+    _print_json(TRAINER_CAPABILITIES)
+    return 0
+
+
+def cmd_batch_run(args) -> int:
+    mgr = _mgr(args)
+    manifest = mgr.load(args.experiment_id)
+    exp_dir = mgr.experiment_dir(args.experiment_id)
+    scheduler = BatchScheduler(experiments_root=args.root,
+                               max_workers=args.workers)
+    batch = scheduler.create_batch(
+        manifest, exp_dir,
+        specs=expand_run_specs(manifest, seeds=args.seeds,
+                               scenario_ids=args.scenarios),
+        trainer=args.trainer, env_mode=args.env_mode,
+        retry_policy=RetryPolicy(max_retries=args.max_retries),
+    )
+    print(f"batch_id: {batch['batch_id']}  jobs: {batch['jobs']}  "
+          f"workers: {args.workers}")
+    result = scheduler.run_until_complete(batch["batch_id"],
+                                          timeout_s=args.timeout)
+    summary = scheduler.status(batch["batch_id"])
+    print(f"status: {result['status']}  "
+          f"completed={summary['completed']} failed={summary['failed']} "
+          f"cancelled={summary['cancelled']}  duration={result['duration_s']}s")
+    for r in result["runs"]:
+        print(f"  job {r['job_id']}: {r['status']} run={r['run_id']} "
+              f"attempts={len(r['attempts'])}")
+    return 0 if summary["failed"] == 0 and summary["cancelled"] == 0 else 1
+
+
+def cmd_curriculum(args) -> int:
+    rd = _run_dir(args, args.run_id)
+    state_path = os.path.join(rd, "curriculum_state.json")
+    if not os.path.exists(state_path):
+        print("Run has no curriculum (no curriculum_state.json).")
+        return 0
+    with open(state_path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+    _print_json(state)
+    return 0
+
+
+def cmd_compare(args) -> int:
+    mgr = _mgr(args)
+    exp_dir = mgr.experiment_dir(args.experiment_id)
+    if args.runs:
+        run_dirs = [RunManager().run_dir(exp_dir, r.strip())
+                    for r in args.runs.split(",") if r.strip()]
+        result = compare_runs(run_dirs, metric=args.metric, scope=args.scope,
+                              smooth_window=args.smooth)
+    else:
+        result = compare_runs(list_run_dirs(exp_dir), metric=args.metric,
+                              scope=args.scope, smooth_window=args.smooth)
+    _print_json(result)
+    return 0
+
+
+def cmd_dataset_export(args) -> int:
+    rd = _run_dir(args, args.run_id)
+    reasons = (args.termination_reasons.split(",")
+               if args.termination_reasons else None)
+    report = export_dataset(
+        rd, args.dest,
+        env_fingerprint=args.env_fingerprint,
+        min_return=args.min_return,
+        termination_reasons=reasons,
+    )
+    _print_json(report)
+    return 0
+
+
+def cmd_worker_serve(args) -> int:
+    from sim_experiment.remote_worker import WorkerService
+    svc = WorkerService(args.host, args.port,
+                        experiments_root=args.worker_root,
+                        token=args.token)
+    svc.start()
+    print(f"Worker service listening on {args.host}:{svc.port} "
+          f"(root={os.path.abspath(args.worker_root)})")
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        svc.stop()
+    return 0
+
+
+def cmd_worker_status(args) -> int:
+    from sim_experiment.remote_worker import RemoteWorkerAdapter
+    caps = RemoteWorkerAdapter(args.host, args.port, args.token).handshake()
+    _print_json(caps)
+    return 0
+
+
 def cmd_runs(args) -> int:
     mgr = _mgr(args)
     exp_dir = mgr.experiment_dir(args.experiment_id)
@@ -260,11 +362,13 @@ def cmd_evaluate(args) -> int:
 
 def cmd_trajectories(args) -> int:
     rd = _run_dir(args, args.run_id)
-    tdir = os.path.join(rd, "trajectories")
-    files = sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []
-    print(f"{len(files)} trajectory files in {tdir}")
-    for f in files:
-        print(f"  {f}")
+    episodes = list_episodes(rd)
+    print(f"{len(episodes)} trajectory episodes in {os.path.join(rd, 'trajectories')}")
+    for e in episodes:
+        print(f"  {e['episode_id']}: steps={e['steps']} "
+              f"return={e['total_return']} reason={e['termination_reason']}")
+    if args.json:
+        _print_json(episodes)
     return 0
 
 
@@ -380,6 +484,56 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--scenarios", nargs="*", default=None)
     s.set_defaults(fn=cmd_batch)
 
+    s = sub.add_parser("batch-run")
+    s.add_argument("experiment_id")
+    s.add_argument("--seeds", type=int, nargs="*", default=None)
+    s.add_argument("--scenarios", nargs="*", default=None)
+    s.add_argument("--trainer", default="ppo")
+    s.add_argument("--env-mode", default="inprocess", choices=["inprocess", "tcp"])
+    s.add_argument("--workers", type=int, default=2)
+    s.add_argument("--max-retries", type=int, default=0)
+    s.add_argument("--timeout", type=float, default=600.0)
+    s.set_defaults(fn=cmd_batch_run)
+
+    s = sub.add_parser("trainers")
+    s.set_defaults(fn=cmd_trainers)
+
+    s = sub.add_parser("curriculum")
+    s.add_argument("experiment_id")
+    s.add_argument("run_id")
+    s.set_defaults(fn=cmd_curriculum)
+
+    s = sub.add_parser("compare")
+    s.add_argument("experiment_id")
+    s.add_argument("--metric", default="reward")
+    s.add_argument("--scope", default="episode")
+    s.add_argument("--smooth", type=int, default=10)
+    s.add_argument("--runs", default="", help="comma-separated run ids (default: all)")
+    s.set_defaults(fn=cmd_compare)
+
+    s = sub.add_parser("dataset-export")
+    s.add_argument("experiment_id")
+    s.add_argument("run_id")
+    s.add_argument("--dest", required=True)
+    s.add_argument("--min-return", type=float, default=None)
+    s.add_argument("--env-fingerprint", default=None)
+    s.add_argument("--termination-reasons", default=None,
+                   help="comma-separated reasons to include")
+    s.set_defaults(fn=cmd_dataset_export)
+
+    s = sub.add_parser("worker-serve")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=9100)
+    s.add_argument("--token", required=True)
+    s.add_argument("--worker-root", default="experiments")
+    s.set_defaults(fn=cmd_worker_serve)
+
+    s = sub.add_parser("worker-status")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, required=True)
+    s.add_argument("--token", required=True)
+    s.set_defaults(fn=cmd_worker_status)
+
     s = sub.add_parser("runs")
     s.add_argument("experiment_id")
     s.set_defaults(fn=cmd_runs)
@@ -410,6 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("trajectories")
     s.add_argument("experiment_id")
     s.add_argument("run_id")
+    s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_trajectories)
 
     s = sub.add_parser("reproduce")

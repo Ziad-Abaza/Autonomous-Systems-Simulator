@@ -90,15 +90,45 @@ class RetryPolicy:
                 "retryable_error_types": sorted(self.retryable_error_types)}
 
 
+class LocalAdapter:
+    """Worker adapter executing via the in-process LocalTrainingOrchestrator."""
+
+    def __init__(self, orchestrator: LocalTrainingOrchestrator):
+        self.orch = orchestrator
+
+    def capabilities(self) -> Dict[str, Any]:
+        return {
+            "type": "local",
+            "trainers": sorted(self.orch.trainer_modules()),
+            "max_envs_per_run": None,
+        }
+
+    def launch(self, manifest, experiment_dir, trainer, env_mode, run_overrides) -> str:
+        return self.orch.launch(
+            manifest, experiment_dir, trainer=trainer, env_mode=env_mode,
+            run_overrides=run_overrides)
+
+    def poll(self, experiment_dir: str, run_id: str) -> Dict[str, Any]:
+        return self.orch.poll(experiment_dir, run_id)
+
+    def cancel(self, experiment_dir: str, run_id: str) -> None:
+        self.orch.cancel(experiment_dir, run_id)
+
+
 @dataclass
 class Worker:
-    """One local execution slot; executes at most one run at a time."""
+    """One execution slot; executes at most one run at a time.
+
+    `adapter` is the execution backend — LocalAdapter (in-process
+    orchestrator) or RemoteWorkerAdapter (TCP worker service).
+    """
     worker_id: str
     capabilities: Dict[str, Any] = field(default_factory=dict)
     status: str = WorkerState.IDLE
     current_run_id: Optional[str] = None
     current_job_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    adapter: Any = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -119,24 +149,32 @@ class BatchScheduler:
         experiments_root: str = "experiments",
         max_workers: int = 2,
         orchestrator: Optional[LocalTrainingOrchestrator] = None,
+        workers: Optional[List[Worker]] = None,
     ):
-        if max_workers < 1:
-            raise ValueError("max_workers must be >= 1")
         self.experiments_root = os.path.abspath(experiments_root)
         self.orch = orchestrator or LocalTrainingOrchestrator(
             experiments_root=self.experiments_root)
         self.run_manager = RunManager()
-        self.workers: List[Worker] = [
-            Worker(
-                worker_id=f"worker_{i}",
-                capabilities={
-                    "type": "local",
-                    "trainers": sorted(LocalTrainingOrchestrator.trainer_modules()),
-                    "max_envs_per_run": None,   # bounded by manifest num_envs
-                },
-            )
-            for i in range(max_workers)
-        ]
+        if workers is not None:
+            if not workers:
+                raise ValueError("workers must not be empty")
+            self.workers = workers
+            self._local_adapter = LocalAdapter(self.orch)
+            for w in self.workers:
+                if w.adapter is None:
+                    w.adapter = self._local_adapter
+        else:
+            if max_workers < 1:
+                raise ValueError("max_workers must be >= 1")
+            self._local_adapter = LocalAdapter(self.orch)
+            self.workers = [
+                Worker(
+                    worker_id=f"worker_{i}",
+                    capabilities=self._local_adapter.capabilities(),
+                    adapter=self._local_adapter,
+                )
+                for i in range(max_workers)
+            ]
         self._batches: Dict[str, Dict[str, Any]] = {}
 
     # ------------------------------------------------------------ batch CRUD
@@ -249,7 +287,10 @@ class BatchScheduler:
             if job["status"] == JobStatus.RUNNING:
                 for attempt in job["attempts"]:
                     if attempt["status"] == "RUNNING" and attempt.get("run_id"):
-                        self.orch.cancel(exp_dir, attempt["run_id"])
+                        worker = self._worker_by_id(attempt.get("worker_id"))
+                        adapter = (worker.adapter if worker is not None
+                                   else self._local_adapter)
+                        adapter.cancel(exp_dir, attempt["run_id"])
                         attempt["status"] = "CANCELLED"
                 job["status"] = JobStatus.CANCELLED
             elif job["status"] == JobStatus.QUEUED:
@@ -302,9 +343,10 @@ class BatchScheduler:
                 "started_at": round(time.time(), 4),
                 "status": "STARTING",
                 "run_id": None,
+                "worker_id": worker.worker_id,
             }
             try:
-                run_id = self.orch.launch(
+                run_id = worker.adapter.launch(
                     rec["manifest"], rec["experiment_dir"],
                     trainer=data["trainer"], env_mode=data["env_mode"],
                     run_overrides={
@@ -335,7 +377,9 @@ class BatchScheduler:
             if job["status"] != JobStatus.RUNNING:
                 continue
             attempt = job["attempts"][-1]
-            summary = self.orch.poll(rec["experiment_dir"], attempt["run_id"])
+            worker = self._worker_by_id(attempt.get("worker_id"))
+            adapter = worker.adapter if worker is not None else self._local_adapter
+            summary = adapter.poll(rec["experiment_dir"], attempt["run_id"])
             if summary["status"] not in RunStatus.TERMINAL:
                 continue
             attempt["status"] = summary["status"]
@@ -356,6 +400,12 @@ class BatchScheduler:
                 w.status = WorkerState.IDLE
                 w.current_run_id = None
                 w.current_job_id = None
+
+    def _worker_by_id(self, worker_id: Optional[str]) -> Optional[Worker]:
+        for w in self.workers:
+            if w.worker_id == worker_id:
+                return w
+        return None
 
     def _persist(self, rec: Dict[str, Any]) -> None:
         path = os.path.join(rec["batch_dir"], "batch.json")
