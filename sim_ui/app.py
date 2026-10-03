@@ -64,10 +64,20 @@ class SimulationStudioApp:
         self.port = port
         self.is_running = True
 
-        # Studio settings + asset libraries (Phase 7)
+        # Studio settings + asset libraries (Phase 7).
+        # Settings live inside the organized data dir (<repo>/data/),
+        # not loose at the repo root; a legacy root file is migrated.
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.settings = StudioSettings(
-            os.path.join(repo_root, "studio_settings.json"))
+        settings_path = os.path.join(repo_root, "data", "studio_settings.json")
+        legacy_settings = os.path.join(repo_root, "studio_settings.json")
+        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+        if (os.path.exists(legacy_settings)
+                and not os.path.exists(settings_path)):
+            try:
+                os.replace(legacy_settings, settings_path)
+            except OSError:
+                pass
+        self.settings = StudioSettings(settings_path)
         import sim_ui.theme as _theme
         _theme.set_theme(self.settings.theme)
         self.library = TrackLibrary(os.path.join(repo_root, "tracks"))

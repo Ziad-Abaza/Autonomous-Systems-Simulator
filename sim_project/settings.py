@@ -1,6 +1,7 @@
 """
 Studio application settings — user-facing preferences persisted to a
-small JSON file at the repo root (`studio_settings.json`, gitignored).
+small JSON file inside the studio data directory
+(`<data_root>/studio_settings.json`, gitignored).
 
 Separates *application* preferences (data root, theme, ui scale) from
 *environment* documents (*.sim.json) — different lifetimes, different
@@ -52,7 +53,10 @@ class StudioSettings:
         v = self._data.get("data_root") or ""
         if v:
             return os.path.abspath(v)
-        return os.path.abspath(os.path.join(os.path.dirname(self.path), "data"))
+        # Default: <repo>/data — independent of where the settings file
+        # itself lives (the file is stored inside this directory).
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(repo, "data")
 
     @data_root.setter
     def data_root(self, v: str) -> None:
