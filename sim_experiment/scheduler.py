@@ -175,6 +175,10 @@ class BatchScheduler:
         self.heartbeat_interval_s = float(heartbeat_interval_s)
         self.lease_ttl_s = float(lease_ttl_s)
         self.experiments_root = os.path.abspath(experiments_root)
+        # Persistent worker registry (experiments_root/workers/registry.json)
+        # — survives scheduler restarts; reconnecting worker_ids reuse records.
+        from sim_experiment.worker_registry import WorkerRegistry
+        self.registry = WorkerRegistry(self.experiments_root)
         self.orch = orchestrator or LocalTrainingOrchestrator(
             experiments_root=self.experiments_root)
         self.run_manager = RunManager()
@@ -309,6 +313,7 @@ class BatchScheduler:
                 resp = hb()
                 if resp.get("worker_id"):
                     w.remote_worker_id = resp["worker_id"]
+                self.registry.heartbeat(w.remote_worker_id or w.worker_id)
                 w.last_heartbeat = now
                 w.missed_heartbeats = 0
                 continue
@@ -322,6 +327,7 @@ class BatchScheduler:
         """Marks a worker OFFLINE and requeues/rejects its in-flight jobs."""
         w.status = WorkerState.OFFLINE
         w.metadata["offline_reason"] = reason
+        self.registry.mark_offline(w.remote_worker_id or w.worker_id, reason)
         job_id = w.current_job_id
         w.current_run_id = None
         w.current_job_id = None
@@ -414,6 +420,10 @@ class BatchScheduler:
         data = rec["data"]
         for job in data["jobs"]:
             if job["status"] != JobStatus.QUEUED:
+                continue
+            # Duplicate-dispatch guard: never start a second attempt while a
+            # previous attempt is still marked RUNNING (active lease).
+            if job["attempts"] and job["attempts"][-1]["status"] == "RUNNING":
                 continue
             worker = self._idle_worker(data["trainer"])
             if worker is None:

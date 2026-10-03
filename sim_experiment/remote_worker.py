@@ -99,6 +99,22 @@ class WorkerService:
                 "supported": list(SUPPORTED_WORKER_VERSIONS)}}
 
         mtype = msg.get("type")
+
+        def _root_checked(exp_dir_field: str) -> Optional[Dict[str, Any]]:
+            """Returns an ERROR response if msg[exp_dir_field] escapes root."""
+            exp_dir = os.path.abspath(str(msg.get(exp_dir_field, "")))
+            root = os.path.abspath(self.orch.experiments_root)
+            try:
+                inside = os.path.commonpath([root, exp_dir]) == root
+            except ValueError:
+                inside = False
+            if not inside:
+                return {"type": "ERROR", "error": {
+                    "type": "invalid_experiment_dir",
+                    "message": f"experiment_dir escapes worker root: "
+                               f"{msg.get(exp_dir_field)!r}"}}
+            return None
+
         try:
             if mtype == "HELLO":
                 return {"type": "HELLO_ACK",
@@ -116,35 +132,42 @@ class WorkerService:
                         "alive": True,
                         "worker_id": self.worker_id}
 
+            if mtype == "STATUS":
+                return {"type": "STATUS_ACK",
+                        "alive": True,
+                        "worker_id": self.worker_id,
+                        "protocol_version": WORKER_PROTOCOL_VERSION,
+                        "capabilities": self._capabilities()}
+
             if mtype == "LAUNCH":
                 # Root containment: the experiment dir must live under this
                 # worker's experiments root — remote callers cannot point
                 # launches at arbitrary filesystem locations.
-                exp_dir = os.path.abspath(msg["experiment_dir"])
-                root = os.path.abspath(self.orch.experiments_root)
-                try:
-                    inside = os.path.commonpath([root, exp_dir]) == root
-                except ValueError:
-                    inside = False  # different drive / malformed path
-                if not inside:
-                    return {"type": "ERROR", "error": {
-                        "type": "invalid_experiment_dir",
-                        "message": f"experiment_dir escapes worker root: "
-                                   f"{msg['experiment_dir']!r}"}}
+                bad = _root_checked("experiment_dir")
+                if bad:
+                    return bad
                 manifest = ExperimentManifest.from_dict(msg["manifest"])
                 run_id = self.orch.launch(
-                    manifest, exp_dir,
+                    manifest, os.path.abspath(msg["experiment_dir"]),
                     trainer=msg.get("trainer", "ppo"),
                     env_mode=msg.get("env_mode", "inprocess"),
                     run_overrides=msg.get("run_overrides"))
                 return {"type": "LAUNCH_ACK", "run_id": run_id}
 
             if mtype == "POLL":
-                summary = self.orch.poll(msg["experiment_dir"], msg["run_id"])
+                bad = _root_checked("experiment_dir")
+                if bad:
+                    return bad
+                summary = self.orch.poll(
+                    os.path.abspath(msg["experiment_dir"]), msg["run_id"])
                 return {"type": "POLL_ACK", "summary": summary}
 
             if mtype == "CANCEL":
-                self.orch.cancel(msg["experiment_dir"], msg["run_id"])
+                bad = _root_checked("experiment_dir")
+                if bad:
+                    return bad
+                self.orch.cancel(
+                    os.path.abspath(msg["experiment_dir"]), msg["run_id"])
                 return {"type": "CANCEL_ACK"}
 
             return {"type": "ERROR", "error": {

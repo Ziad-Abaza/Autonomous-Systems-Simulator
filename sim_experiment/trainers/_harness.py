@@ -239,6 +239,15 @@ class EpisodeTrajectoryRecorder:
     Records per-episode trajectories from runner on_step records.
     Expects rec = {env_idx, obs, action, reward, terminated, truncated, info}
     plus optional episode_seed (exact reset seed for this episode).
+
+    Episodes are BUFFERED in memory and written atomically at episode end,
+    selected by the predicate from
+    training.algorithm_config.trajectory_sampling:
+
+        {"mode": "first_n"|"every_n"|"probability"|"episodes"|
+                 "min_return"|"termination_reasons"|"all", ...}
+
+    Back-compat: integer trajectory_episodes -> {"mode": "first_n", n}.
     `stage_fn` (optional callable) supplies the current curriculum stage.
     """
 
@@ -252,19 +261,89 @@ class EpisodeTrajectoryRecorder:
         self.env_episode_idx: List[int] = []
         self.env_step_idx: List[int] = []
         self.episodes_done = 0
+        self._buffers: List[List[Dict[str, Any]]] = []
+        self._ep_seeds: List[Any] = []
+        self.sampling = self._sampling_config(traj_limit)
+
+    def _sampling_config(self, traj_limit: int) -> Dict[str, Any]:
+        alg = (self.contract.get("training") or {}).get("algorithm_config") or {}
+        cfg = dict(alg.get("trajectory_sampling") or {})
+        if cfg:
+            return cfg
+        # Back-compat: bare trajectory_episodes / ctor limit -> first_n.
+        n = int(alg.get("trajectory_episodes", traj_limit))
+        return {"mode": "first_n", "n": n}
 
     def attach(self, num_envs: int) -> None:
         self.env_episode_idx = [0] * num_envs
         self.env_step_idx = [0] * num_envs
+        self._buffers = [[] for _ in range(num_envs)]
+        self._ep_seeds = [None] * num_envs
+
+    def _episode_selected(self, env_idx: int, ep_idx: int,
+                          steps: List[Dict[str, Any]]) -> bool:
+        cfg = self.sampling
+        mode = cfg.get("mode", "first_n")
+        ep_id = f"train_env{env_idx}_ep{ep_idx}"
+        if mode == "all":
+            return True
+        if mode == "first_n":
+            return ep_idx < int(cfg.get("n", 0))
+        if mode == "every_n":
+            return ep_idx % max(1, int(cfg.get("n", 1))) == 0
+        if mode == "episodes":
+            return ep_id in set(cfg.get("episode_ids") or [])
+        if mode == "probability":
+            import hashlib
+            p = float(cfg.get("p", 0.0))
+            u = int(hashlib.sha256(
+                f"{self.seed}:{env_idx}:{ep_idx}".encode("utf-8")
+            ).hexdigest()[:8], 16) / 0xFFFFFFFF
+            return u < p
+        if mode == "min_return":
+            total = sum(float(s["agent_data"].get("reward", 0.0)) for s in steps)
+            return total >= float(cfg.get("min_return", 0.0))
+        if mode == "termination_reasons":
+            reasons = set(cfg.get("termination_reasons") or [])
+            if not steps:
+                return False
+            return (steps[-1]["agent_data"].get("termination_reason", "")
+                    in reasons)
+        return False
 
     def __call__(self, rec: Dict[str, Any]) -> None:
         env_idx = rec["env_idx"]
         ep_idx = self.env_episode_idx[env_idx]
         self.env_step_idx[env_idx] += 1
         info = rec["info"]
-        if self.traj is not None and ep_idx < self.limit:
-            ep_id = f"train_env{env_idx}_ep{ep_idx}"
-            if self.env_step_idx[env_idx] == 1:
+
+        if self.env_step_idx[env_idx] == 1:
+            self._ep_seeds[env_idx] = rec.get("episode_seed")
+
+        self._buffers[env_idx].append({
+            "step": self.env_step_idx[env_idx],
+            "agent_data": {
+                "obs": rec["obs"],
+                "action": rec["action"],
+                "reward": rec["reward"],
+                "terminated": rec["terminated"],
+                "truncated": rec["truncated"],
+                "termination_reason": info.get("termination_reason", "running"),
+            },
+            "diagnostic_data": {
+                "speed": info.get("speed", 0.0),
+                "lateral_offset": info.get("lateral_offset", 0.0),
+                "heading_error": info.get("heading_error", 0.0),
+                "is_colliding": info.get("is_colliding", False),
+                "is_on_road": info.get("is_on_road", True),
+                "checkpoints_passed": info.get("checkpoints_passed", 0),
+            },
+        })
+
+        if rec["terminated"] or rec["truncated"]:
+            steps = self._buffers[env_idx]
+            if self.traj is not None and self._episode_selected(env_idx, ep_idx, steps):
+                ep_id = f"train_env{env_idx}_ep{ep_idx}"
                 self.traj.start_episode(
                     ep_id,
                     env_fingerprint=self.contract["environment_fingerprint"],
@@ -272,33 +351,20 @@ class EpisodeTrajectoryRecorder:
                     seed=self.seed,
                     observation_schema=self.contract.get("observation_schema"),
                     action_schema=self.contract.get("action_schema"),
-                    episode_seed=rec.get("episode_seed"),
+                    episode_seed=self._ep_seeds[env_idx],
                     curriculum_stage_index=(
                         self.stage_fn() if self.stage_fn else None),
+                    env_index=env_idx,
                 )
-            self.traj.record_step(
-                step=self.env_step_idx[env_idx],
-                agent_data={
-                    "obs": rec["obs"],
-                    "action": rec["action"],
-                    "reward": rec["reward"],
-                    "terminated": rec["terminated"],
-                    "truncated": rec["truncated"],
-                    "termination_reason": info.get("termination_reason", "running"),
-                },
-                diagnostic_data={
-                    "speed": info.get("speed", 0.0),
-                    "lateral_offset": info.get("lateral_offset", 0.0),
-                    "heading_error": info.get("heading_error", 0.0),
-                    "is_colliding": info.get("is_colliding", False),
-                    "is_on_road": info.get("is_on_road", True),
-                    "checkpoints_passed": info.get("checkpoints_passed", 0),
-                },
-            )
-        if rec["terminated"] or rec["truncated"]:
-            if self.traj is not None and ep_idx < self.limit:
-                self.episodes_done += 1
+                for s in steps:
+                    self.traj.record_step(
+                        step=s["step"],
+                        agent_data=s["agent_data"],
+                        diagnostic_data=s["diagnostic_data"])
                 self.traj.close_episode()
+                self.episodes_done += 1
+            self._buffers[env_idx] = []
+            self._ep_seeds[env_idx] = None
             self.env_episode_idx[env_idx] += 1
             self.env_step_idx[env_idx] = 0
 

@@ -68,6 +68,7 @@ class TrajectoryWriter:
         action_schema: Optional[Dict[str, Any]] = None,
         episode_seed: Optional[int] = None,
         curriculum_stage_index: Optional[int] = None,
+        env_index: Optional[int] = None,
     ) -> None:
         self.close_episode()
         if os.path.basename(episode_id) != episode_id:
@@ -86,6 +87,7 @@ class TrajectoryWriter:
             "curriculum_stage_index": (
                 int(curriculum_stage_index)
                 if curriculum_stage_index is not None else None),
+            "env_index": int(env_index) if env_index is not None else None,
             "observation_schema": observation_schema or {},
             "action_schema": action_schema or {},
         })

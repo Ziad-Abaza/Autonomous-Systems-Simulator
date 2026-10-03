@@ -187,6 +187,9 @@ def export_dataset(
             "termination_reasons": sorted(wanted_reasons),
         },
         "skipped": {
+            # Combined key kept for older consumers; the split keys are the
+            # authoritative accounting.
+            "fingerprint_or_schema_mismatch": skipped_fp + skipped_schema,
             "fingerprint_mismatch": skipped_fp,
             "schema_mismatch": skipped_schema,
             "below_min_return": skipped_return,

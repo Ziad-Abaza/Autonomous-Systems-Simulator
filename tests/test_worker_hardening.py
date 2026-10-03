@@ -206,6 +206,52 @@ def test_offline_worker_not_dispatched(tmp_path):
     assert job["status"] == JobStatus.QUEUED
 
 
+def test_poll_cancel_root_checked(worker_service):
+    """POLL/CANCEL cannot reference experiment dirs outside the worker root."""
+    adapter = _adapter(worker_service)
+    for rpc in (adapter.poll, adapter.cancel):
+        with pytest.raises(RuntimeError, match="invalid_experiment_dir|escapes"):
+            rpc("C:\\\\Windows\\\\Temp", "run_x")
+
+
+def test_registry_persists_and_reuses(tmp_path):
+    from sim_experiment.worker_registry import WorkerRegistry
+    reg = WorkerRegistry(str(tmp_path))
+    rec = reg.register("w1", capabilities={"trainers": ["ppo"]})
+    assert rec["status"] == "ONLINE"
+    reg.heartbeat("w1")
+    assert reg.get("w1")["last_heartbeat"] is not None
+    reg.mark_offline("w1", "test")
+    # New instance reads the same file (persistence) — offline survives.
+    reg2 = WorkerRegistry(str(tmp_path))
+    assert reg2.get("w1")["status"] == "OFFLINE"
+    # Same worker_id re-registering reuses (not duplicates) the record.
+    reg2.register("w1")
+    assert len(reg2.list_workers()) == 1
+    assert reg2.get("w1")["status"] == "ONLINE"
+
+
+def test_status_message(worker_service):
+    adapter = _adapter(worker_service)
+    resp = adapter._rpc({"type": "STATUS"})
+    assert resp["worker_id"] == adapter.worker_id or resp["alive"] is True
+
+
+def test_duplicate_dispatch_guard(tmp_path):
+    m, exp_dir = _manifest(tmp_path)
+    live = _LocalDoneAdapter()
+    sched = BatchScheduler(
+        experiments_root=str(tmp_path / "exps"),
+        workers=[Worker("w1", capabilities=live.capabilities(), adapter=live)])
+    batch = sched.create_batch(m, exp_dir, specs=[{"seed": 1}], trainer="dummy")
+    # Force an inconsistent state: job QUEUED but last attempt RUNNING.
+    job = sched._batches[batch["batch_id"]]["data"]["jobs"][0]
+    job["attempts"].append({"attempt": 1, "status": "RUNNING",
+                            "worker_id": "w1", "run_id": "ghost"})
+    sched.tick(batch["batch_id"])
+    assert len(job["attempts"]) == 1  # no second attempt launched
+
+
 def test_custom_retryable_types_honored(tmp_path):
     """RetryPolicy.retryable_error_types is consulted, not just the module set."""
     pol = RetryPolicy(max_retries=1, retryable_error_types=frozenset({"weird_custom"}))

@@ -313,4 +313,22 @@ def make_policy_from_checkpoint(
             return int(q_vals.argmax(dim=1).item())
         return policy
 
+    if algorithm == "bc":
+        from sim_experiment.bc.bc_model import BCPolicy
+        action_mode = ckpt.get("action_mode", "continuous")
+        act_dim = int(ckpt["act_dim"])
+        hidden = tuple(ckpt.get("hidden") or (64, 64))
+        net = BCPolicy(obs_dim, act_dim, hidden, action_mode)
+        net.load_state_dict(ckpt["model_state_dict"])
+        net.eval()
+
+        def policy(obs):
+            x = torch.tensor(_obs_vec(obs, obs_dim), dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                out = net(x).squeeze(0)
+            if action_mode == "discrete":
+                return int(out.argmax().item())
+            return out.cpu().numpy()
+        return policy
+
     raise ValueError(f"No checkpoint adapter for algorithm: {algorithm!r}")
