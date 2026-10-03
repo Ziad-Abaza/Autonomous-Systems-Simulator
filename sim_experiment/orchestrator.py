@@ -123,11 +123,9 @@ class LocalTrainingOrchestrator:
             )
             if curr_errors:
                 raise ValueError("Invalid curriculum: " + "; ".join(curr_errors))
-            if env_mode == "tcp":
-                raise ValueError(
-                    "Curriculum training requires env_mode='inprocess'; "
-                    "TCP headless simulators cannot swap scenarios mid-run."
-                )
+            # Curriculum works in every env_mode: inprocess rebuilds stage
+            # envs, process workers re-set their scenario, and TCP sims
+            # running protocol >= 2.1 accept SET_SCENARIO updates.
 
         rmg = self.run_manager
 

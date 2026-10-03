@@ -180,11 +180,12 @@ def test_contract_process_allows_curriculum():
     assert not any("curriculum" in e for e in errors)
 
 
-def test_contract_still_rejects_tcp_curriculum():
+def test_contract_tcp_curriculum_now_allowed():
+    """Protocol 2.1 SET_SCENARIO lifted the Phase-5 tcp+curriculum ban."""
     contract = _minimal_contract("tcp", curriculum={"stages": []})
     contract["tcp"] = {"host": "127.0.0.1", "ports": [9000]}
     errors = validate_contract(contract)
-    assert any("curriculum" in e for e in errors)
+    assert not any("curriculum" in e for e in errors)
 
 
 # ------------------------------------------------------- end-to-end process run

@@ -96,6 +96,23 @@ class SpatialHashGrid2D:
                 else:
                     cell.append(entity)
 
+    def remove_entity(self, entity: Any) -> bool:
+        """Removes an entity from the broadphase entity index. Returns True
+        if the entity was registered."""
+        found = entity in self.entities
+        if found:
+            self.entities.remove(entity)
+        # Entity may appear in multiple cells (OBB span); purge everywhere.
+        empty = []
+        for key, cell in self.entity_grid.items():
+            if entity in cell:
+                cell.remove(entity)
+                if not cell:
+                    empty.append(key)
+        for key in empty:
+            del self.entity_grid[key]
+        return found
+
     def query_candidate_segment_indices(self, center: Vec2, radius: float) -> List[int]:
         """
         Returns list of segment indices in cells overlapping circle (center, radius).

@@ -94,5 +94,13 @@ class SimGymEnv(gym.Env):
         obs, reward, terminated, truncated, info = self.client.step(action)
         return obs, reward, terminated, truncated, info
 
+    def set_scenario(self, scenario, seed: Optional[int] = None, reset: bool = True):
+        """
+        Scenario update on the running headless simulator (protocol >= 2.1).
+        Defaults to reset=True so curriculum stage transitions apply
+        atomically even when the remote env sits mid-episode.
+        """
+        return self.client.set_scenario(scenario, seed=seed, reset=reset)
+
     def close(self) -> None:
         self.client.close()

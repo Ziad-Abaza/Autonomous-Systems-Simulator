@@ -20,11 +20,17 @@ class MessageType:
     STEP_ACK = "STEP_ACK"
     GET_STATE = "GET_STATE"
     STATE_ACK = "STATE_ACK"
+    SET_SCENARIO = "SET_SCENARIO"
+    SET_SCENARIO_ACK = "SET_SCENARIO_ACK"
     ERROR = "ERROR"
 
 
-PROTOCOL_VERSION = "2.0"
-SUPPORTED_PROTOCOL_VERSIONS = ("2.0",)
+PROTOCOL_VERSION = "2.1"
+SUPPORTED_PROTOCOL_VERSIONS = ("2.0", "2.1")
+
+# Minimum protocol version required for SET_SCENARIO. Clients negotiated
+# at 2.0 are rejected for scenario updates.
+SET_SCENARIO_MIN_VERSION = "2.1"
 
 
 class ProtocolEncoder:

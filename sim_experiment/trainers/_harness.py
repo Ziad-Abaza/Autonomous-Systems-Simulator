@@ -49,19 +49,29 @@ def build_envs_from_contract(
     seed = int(contract["seed"])
     seed_fn = seed_fn or (lambda i: seed + i)
 
-    if contract["env_mode"] == "tcp":
-        from sim_client.gym_env import SimGymEnv
-        host = contract["tcp"]["host"]
-        ports = contract["tcp"]["ports"]
-        return [SimGymEnv(host=host, port=p) for p in ports[:num_envs]]
-
-    with open(contract["paths"]["environment_json"], "r", encoding="utf-8") as f:
-        env_dict = json.load(f)
     if scenario_dict is None:
         scenario_dict = contract.get("scenario") or None
     if scenario_dict is None and os.path.exists(contract["paths"]["scenario_json"]):
         with open(contract["paths"]["scenario_json"], "r", encoding="utf-8") as f:
             scenario_dict = json.load(f)
+
+    if contract["env_mode"] == "tcp":
+        from sim_client.gym_env import SimGymEnv
+        from sim_experiment.vec_env import SyncVectorEnv
+        host = contract["tcp"]["host"]
+        ports = contract["tcp"]["ports"]
+        # Wrapped as a VectorEnv so curriculum stage transitions broadcast
+        # SET_SCENARIO uniformly (protocol >= 2.1 headless simulators).
+        vec = SyncVectorEnv(
+            [SimGymEnv(host=host, port=p) for p in ports[:num_envs]])
+        # The contract's scenario must actually reach the remote sims —
+        # otherwise they run whatever scenario their own project embeds.
+        if scenario_dict:
+            vec.set_scenario(scenario_dict)
+        return vec
+
+    with open(contract["paths"]["environment_json"], "r", encoding="utf-8") as f:
+        env_dict = json.load(f)
 
     if contract["env_mode"] == "process":
         from sim_experiment.process_env import ProcessVectorEnv

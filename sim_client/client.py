@@ -73,6 +73,35 @@ class SimulationClient:
         info = resp.get('info', {})
         return obs, reward, terminated, truncated, info
 
+    def set_scenario(
+        self,
+        scenario: Union[Dict[str, Any], str, Any],
+        seed: Optional[int] = None,
+        reset: bool = False,
+    ) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
+        """
+        Sends SET_SCENARIO (protocol >= 2.1).
+
+        `scenario`: serialized ScenarioDefinition dict, a standard-library
+        scenario_id string, or a ScenarioDefinition object.
+        `reset=True` applies the scenario and resets atomically (allowed
+        mid-episode); without it the server rejects while an episode is
+        active. Returns (obs, info) — obs is None when no reset occurred.
+        """
+        if isinstance(scenario, str):
+            payload = {'scenario_id': scenario}
+        else:
+            scen_dict = scenario.to_dict() if hasattr(scenario, 'to_dict') else dict(scenario)
+            payload = {'scenario': scen_dict}
+        payload['seed'] = seed
+        payload['reset'] = bool(reset)
+        self._send(MessageType.SET_SCENARIO, payload)
+        msg_type, resp = self._receive()
+        if msg_type != MessageType.SET_SCENARIO_ACK:
+            raise RuntimeError(f"SET_SCENARIO failed: {resp}")
+        obs = np.array(resp['obs'], dtype=np.float32) if 'obs' in resp else None
+        return obs, resp
+
     def get_state(self) -> Dict[str, Any]:
         self._send(MessageType.GET_STATE, {})
         _, resp = self._receive()

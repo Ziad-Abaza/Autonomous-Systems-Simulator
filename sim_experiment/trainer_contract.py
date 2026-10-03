@@ -109,9 +109,7 @@ def validate_contract(contract: Dict[str, Any]) -> List[str]:
         tcp = contract.get("tcp", {})
         if not tcp.get("ports"):
             errors.append("env_mode 'tcp' requires tcp.ports")
-        if contract.get("curriculum"):
-            errors.append(
-                "curriculum requires env_mode 'inprocess': headless TCP "
-                "simulators cannot swap scenarios mid-run"
-            )
+        # Curriculum over TCP requires simulators running protocol >= 2.1
+        # (SET_SCENARIO). The contract no longer rejects the combination;
+        # the runtime fails explicitly if a simulator doesn't support it.
     return errors

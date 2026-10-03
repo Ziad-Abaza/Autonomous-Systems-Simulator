@@ -146,6 +146,28 @@ class SimulationEnvironment:
         self.agent = agent
         self._compile_agent_pipelines()
 
+    def set_scenario(self, scenario_def: Optional[ScenarioDefinition]) -> None:
+        """
+        Replaces the active ScenarioDefinition for subsequent resets.
+        Removes entities previously spawned from scenario obstacle_overrides;
+        does NOT reset the environment — callers decide when the new scenario
+        takes effect (typically immediately via reset()).
+        """
+        self._clear_scenario_entities()
+        self.scenario_def = scenario_def
+
+    def _clear_scenario_entities(self) -> None:
+        """Removes scenario-spawned entities from entities/obstacles/broadphase."""
+        spawned = [e for e in self.entities
+                   if getattr(e, '_scenario_spawned', False)]
+        for ent in spawned:
+            self.entities.remove(ent)
+            if ent in self.obstacles:
+                self.obstacles.remove(ent)
+            bp = getattr(self.track, 'broadphase', None)
+            if bp is not None:
+                bp.remove_entity(ent)
+
     def set_road_definition(self, road_def: RoadDefinition) -> None:
         """Updates road definition and regenerates 3D mesh and collision bounds."""
         self.road_def = road_def
@@ -237,6 +259,11 @@ class SimulationEnvironment:
         self.vehicle.config.tire_friction = self.base_vehicle_config.tire_friction * tire_f
         self.vehicle._recompute_inertials()
 
+        # Remove entities spawned by scenario obstacle_overrides on previous
+        # resets — they are re-created below from the CURRENT scenario_def,
+        # so obstacles never accumulate across resets or scenario switches.
+        self._clear_scenario_entities()
+
         # Compute initial spawn pose
         sp = self.road_def.spawn_point
         spawn_yaw = sp.yaw + yaw_jit
@@ -278,7 +305,9 @@ class SimulationEnvironment:
             if hasattr(self.reward_engine, 'config'):
                 self.reward_engine.config.target_speed = float(self.scenario_def.target_speed_override)
 
-        # Apply scenario obstacle overrides if defined
+        # Apply scenario obstacle overrides if defined. Scenario-spawned
+        # entities are tagged so set_scenario()/reset() can replace them
+        # instead of accumulating duplicates.
         if self.scenario_def and self.scenario_def.obstacle_overrides:
             for obs_data in self.scenario_def.obstacle_overrides:
                 try:
@@ -287,8 +316,9 @@ class SimulationEnvironment:
                     pos_raw = obs_data.get("pos", [0.0, 0.0, 0.0])
                     ent_pos = Vec3(pos_raw[0], pos_raw[1], pos_raw[2] if len(pos_raw) > 2 else 0.0)
                     ent_yaw = float(obs_data.get("yaw", 0.0))
-                    ent = create_entity(ent_type, ent_pos, ent_yaw)
+                    ent = create_entity(ent_type, pos=ent_pos, yaw=ent_yaw)
                     ent.name = obs_data.get("name", ent.name)
+                    ent._scenario_spawned = True
                     self.add_entity(ent)
                 except Exception:
                     pass

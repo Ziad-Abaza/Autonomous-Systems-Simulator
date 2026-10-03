@@ -68,11 +68,12 @@ def test_contract_without_curriculum(project):
     assert validate_contract(contract) == []
 
 
-def test_curriculum_rejected_over_tcp(manifest):
+def test_curriculum_allowed_over_tcp(manifest):
+    """Phase 6: protocol 2.1 SET_SCENARIO lifted the tcp+curriculum ban."""
     contract = build_contract(manifest, "exp", "run", "run_1",
                               env_mode="tcp", tcp_ports=[9000])
     errors = validate_contract(contract)
-    assert any("curriculum" in e and "tcp" in e.lower() for e in errors)
+    assert not any("curriculum" in e and "tcp" in e.lower() for e in errors)
 
 
 def test_invalid_curriculum_rejected_at_launch(tmp_path, project):
