@@ -18,6 +18,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "theme": "dark",
     "ui_scale": 1.0,
     "recent_files": [],         # absolute paths, most-recent first (max 10)
+    "recordings_dir": "",       # persisted recording destination; "" = <data_root>/recordings
 }
 
 
@@ -95,9 +96,21 @@ class StudioSettings:
     # ---- recording/data dirs ----
 
     def recordings_dir(self) -> str:
-        d = os.path.join(self.data_root, "recordings")
+        # A user-chosen destination (from the record dialog's Choose…
+        # button) persists across sessions; "" falls back to the
+        # data_root default.
+        d = self._data.get("recordings_dir") or ""
+        if d:
+            d = os.path.abspath(d)
+        else:
+            d = os.path.join(self.data_root, "recordings")
         os.makedirs(d, exist_ok=True)
         return d
+
+    def set_recordings_dir(self, path: str) -> None:
+        """Persists a user-chosen recording destination ("" resets to
+        the data_root default)."""
+        self._data["recordings_dir"] = os.path.abspath(path) if path else ""
 
     def datasets_dir(self) -> str:
         d = os.path.join(self.data_root, "datasets")

@@ -36,6 +36,10 @@ class VisualTrackEditor:
         self.is_dragging_entity = False
         self.is_rotating_entity = False
         self.is_dragging_width = False
+        self.is_dragging_elev = False
+        self.is_dragging_bank = False
+        self._drag_start_val = 0.0
+        self._drag_start_screen = (0, 0)
         self.is_panning = False
 
         # Placement tool mode: None, "obstacle", "barrier", "cone", "traffic_sign", "traffic_light", "spawn"
@@ -223,6 +227,27 @@ class VisualTrackEditor:
         """Handles mouse clicks for selection, dragging, panning, and entity placement."""
         wx, wy = self.screen_to_world(pos[0], pos[1])
 
+        # 0. Manipulation handles on the current selection take priority.
+        if button == 1 and self.selected_point_idx is not None:
+            if 0 <= self.selected_point_idx < len(self.road_def.control_points):
+                for kind, flag in (("width", "is_dragging_width"),
+                                   ("elev", "is_dragging_elev"),
+                                   ("bank", "is_dragging_bank")):
+                    hx, hy = self._cp_handle_pos(kind)
+                    if hx is not None and (pos[0]-hx)**2 + (pos[1]-hy)**2 <= 100:
+                        setattr(self, flag, True)
+                        cp = self.road_def.control_points[self.selected_point_idx]
+                        self._drag_start_val = {"width": cp.width,
+                                                "elev": cp.z,
+                                                "bank": cp.banking}[kind]
+                        self._drag_start_screen = pos
+                        return True
+        if button == 1 and self.selected_entity_id is not None:
+            hx, hy = self._entity_rotate_handle_pos()
+            if hx is not None and (pos[0]-hx)**2 + (pos[1]-hy)**2 <= 100:
+                self.is_rotating_entity = True
+                return True
+
         # 1. Middle button: Pan
         if button == 2:
             self.is_panning = True
@@ -357,11 +382,14 @@ class VisualTrackEditor:
 
     def handle_mouse_up(self) -> None:
         was_editing = (self.is_dragging_point or self.is_dragging_entity
-                       or self.is_dragging_width)
+                       or self.is_dragging_width or self.is_dragging_elev
+                       or self.is_dragging_bank or self.is_rotating_entity)
         self.is_dragging_point = False
         self.is_dragging_entity = False
         self.is_rotating_entity = False
         self.is_dragging_width = False
+        self.is_dragging_elev = False
+        self.is_dragging_bank = False
         self.is_panning = False
         if was_editing:
             self._changed()  # committed drag → history/dirty hook
@@ -400,6 +428,60 @@ class VisualTrackEditor:
                 wx, wy = self.screen_to_world(pos[0], pos[1])
                 ent.pos.x = self._snap(wx)
                 ent.pos.y = self._snap(wy)
+
+        elif self.is_dragging_width and self.selected_point_idx is not None:
+            cp = self.road_def.control_points[self.selected_point_idx]
+            sx, sy = self.world_to_screen(cp.x, cp.y)
+            new_w = abs(pos[0] - sx) * 2.0 / max(0.01, self.zoom)
+            cp.width = round(clamp(new_w, 4.0, 40.0), 1)
+
+        elif self.is_dragging_elev and self.selected_point_idx is not None:
+            cp = self.road_def.control_points[self.selected_point_idx]
+            dz = -(pos[1] - self._drag_start_screen[1]) / max(0.01, self.zoom)
+            cp.z = round(clamp(self._drag_start_val + dz, -50.0, 100.0), 2)
+
+        elif self.is_dragging_bank and self.selected_point_idx is not None:
+            cp = self.road_def.control_points[self.selected_point_idx]
+            db = -(pos[1] - self._drag_start_screen[1]) * 0.5
+            cp.banking = round(clamp(self._drag_start_val + db, -30.0, 30.0), 1)
+
+        elif self.is_rotating_entity and self.selected_entity_id is not None:
+            ent = self.get_selected_entity()
+            if ent:
+                esx, esy = self.world_to_screen(ent.pos.x, ent.pos.y)
+                ent.yaw = math.atan2(-(pos[1] - esy), pos[0] - esx)
+
+    def _cp_handle_pos(self, kind: str) -> Tuple[Optional[int], Optional[int]]:
+        """Screen position of a manipulation handle on the selected CP.
+
+        width → right edge of the width-preview circle;
+        elev  → 22 px below center; bank → 22 px left.
+        Must stay in sync with the handle drawing in draw_editor().
+        """
+        if self.selected_point_idx is None:
+            return None, None
+        if not (0 <= self.selected_point_idx < len(self.road_def.control_points)):
+            return None, None
+        cp = self.road_def.control_points[self.selected_point_idx]
+        sx, sy = self.world_to_screen(cp.x, cp.y)
+        if kind == "width":
+            return sx + int(cp.width * 0.5 * self.zoom), sy
+        if kind == "elev":
+            return sx, sy + 22
+        if kind == "bank":
+            return sx - 22, sy
+        return None, None
+
+    def _entity_rotate_handle_pos(self) -> Tuple[Optional[int], Optional[int]]:
+        """Screen position of the rotation handle on the selected entity —
+        a dot offset along the entity's forward direction."""
+        ent = self.get_selected_entity()
+        if ent is None:
+            return None, None
+        esx, esy = self.world_to_screen(ent.pos.x, ent.pos.y)
+        r = max(14, int(max(getattr(ent, 'length', 2.0),
+                            getattr(ent, 'width', 2.0)) * 0.5 * self.zoom)) + 10
+        return int(esx + math.cos(ent.yaw) * r), int(esy - math.sin(ent.yaw) * r)
 
     def _dist_point_to_line_segment(self, px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
         dx = x2 - x1
@@ -565,6 +647,24 @@ class VisualTrackEditor:
                 w_pixels = int(cp.width * 0.5 * self.zoom)
                 pygame.draw.circle(surface, (255, 255, 255, 80), (sx, sy), w_pixels, 1)
 
+                # Drag handles: WIDTH (right, on the width circle),
+                # ELEVATION (below — vertical drag = meters), BANKING
+                # (left — vertical drag = degrees). Positions mirror
+                # _cp_handle_pos().
+                h_w = (sx + w_pixels, sy)
+                h_e = (sx, sy + 22)
+                h_b = (sx - 22, sy)
+                pygame.draw.line(surface, T.C.selection, (sx, sy), h_w, 1)
+                pygame.draw.rect(surface, T.C.selection,
+                                 (h_w[0] - 5, h_w[1] - 5, 10, 10), 0)
+                pygame.draw.line(surface, T.C.info, (sx, sy + radius), h_e, 1)
+                pygame.draw.circle(surface, T.C.info, h_e, 5)
+                pygame.draw.line(surface, T.C.warn, (sx - radius, sy), h_b, 1)
+                pygame.draw.circle(surface, T.C.warn, h_b, 5)
+                surface.blit(font.render("W", True, T.C.selection), (h_w[0] + 7, h_w[1] - 6))
+                surface.blit(font.render("Z", True, T.C.info), (h_e[0] + 7, h_e[1] - 6))
+                surface.blit(font.render("B", True, T.C.warn), (h_b[0] - 14, h_b[1] - 6))
+
                 # Detailed metadata label
                 elev_str = f"Z: {cp.z:+.1f}m" if cp.z != 0 else ""
                 bank_str = f"Bank: {cp.banking:+.0f}°" if cp.banking != 0 else ""
@@ -636,9 +736,14 @@ class VisualTrackEditor:
         sx, sy = self.world_to_screen(ent.pos.x, ent.pos.y)
         is_sel = (ent.entity_id == self.selected_entity_id)
 
-        # Highlight ring if selected
+        # Highlight ring + rotation handle if selected
         if is_sel:
             pygame.draw.circle(surface, T.C.selection, (sx, sy), 18, 2)
+            rhx, rhy = self._entity_rotate_handle_pos()
+            if rhx is not None:
+                pygame.draw.line(surface, T.C.info, (sx, sy), (rhx, rhy), 1)
+                pygame.draw.circle(surface, T.C.info, (rhx, rhy), 5)
+                pygame.draw.circle(surface, T.C.selection, (rhx, rhy), 7, 1)
 
         cos_y = math.cos(ent.yaw)
         sin_y = math.sin(ent.yaw)

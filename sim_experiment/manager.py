@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from typing import Dict, Any, List, Optional
 
 from sim_experiment.manifest import ExperimentManifest
@@ -98,6 +99,7 @@ class ExperimentManager:
         self._write_json(self._manifest_path(manifest.experiment_id), manifest.to_dict())
         self._write_json(os.path.join(exp_dir, "environment.json"), manifest.environment)
         self._write_json(os.path.join(exp_dir, "scenario.json"), manifest.scenario_configuration)
+        self._invalidate_list_cache()
         return exp_dir
 
     def save(self, manifest: ExperimentManifest) -> None:
@@ -111,6 +113,7 @@ class ExperimentManager:
         if errors:
             raise ValueError("Invalid experiment manifest: " + "; ".join(errors))
         self._write_json(self._manifest_path(manifest.experiment_id), manifest.to_dict())
+        self._invalidate_list_cache()
 
     def _try_load(self, experiment_id: str) -> Optional[ExperimentManifest]:
         path = self._manifest_path(experiment_id)
@@ -126,7 +129,15 @@ class ExperimentManager:
         return m
 
     def list_experiments(self, include_archived: bool = True) -> List[Dict[str, Any]]:
-        """Lightweight summaries of all experiments (no full env snapshots)."""
+        """Lightweight summaries of all experiments (no full env snapshots).
+
+        Results are cached ~2 s — UI panels call this per frame and the
+        per-manifest JSON reads made it the top UI IO cost.
+        """
+        bucket = int(time.time() / 2.0)
+        cache = getattr(self, "_list_cache", None)
+        if cache and cache[0] == bucket and cache[1] == include_archived:
+            return [dict(r) for r in cache[2]]
         out: List[Dict[str, Any]] = []
         if not os.path.isdir(self.root_dir):
             return out
@@ -160,7 +171,11 @@ class ExperimentManager:
                 "launched": d.get("launched", False),
                 "archived": d.get("archived", False),
             })
+        self._list_cache = (bucket, include_archived, out)
         return out
+
+    def _invalidate_list_cache(self) -> None:
+        self._list_cache = None
 
     def clone(self, experiment_id: str) -> ExperimentManifest:
         """Returns an unlaunched, unsaved copy suitable for editing."""

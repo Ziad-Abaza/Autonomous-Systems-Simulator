@@ -258,7 +258,35 @@ class EnvironmentVersionManager:
                 term_changes.append(f"{k}: {va} -> {vb}")
         diffs.append(SubsystemDiff("Termination", len(term_changes) > 0, term_changes))
 
-        # 6. Scenario & Entities comparison
+        # 6. Sensor suite comparison (Phase 3 authored sensor_configs or
+        # legacy sensor_names list)
+        sen_changes = []
+        sc_a = {c.get("name"): c for c in agent_a.get("sensor_configs", [])}
+        sc_b = {c.get("name"): c for c in agent_b.get("sensor_configs", [])}
+        for name in set(sc_a.keys()).union(sc_b.keys()):
+            if name not in sc_a:
+                sen_changes.append(f"+ sensor '{name}'")
+            elif name not in sc_b:
+                sen_changes.append(f"- sensor '{name}'")
+            else:
+                ea, eb = sc_a[name].get("enabled"), sc_b[name].get("enabled")
+                if ea != eb:
+                    sen_changes.append(f"sensor '{name}' enabled: {ea} -> {eb}")
+                if sc_a[name].get("sensor_type") != sc_b[name].get("sensor_type"):
+                    sen_changes.append(
+                        f"sensor '{name}' type: {sc_a[name].get('sensor_type')}"
+                        f" -> {sc_b[name].get('sensor_type')}")
+                if (sc_a[name].get("params") or {}) != (sc_b[name].get("params") or {}):
+                    sen_changes.append(f"sensor '{name}' params changed")
+        sn_a = set(dict_a.get("agent", {}).get("sensor_names",
+                     dict_a.get("sensor_names", [])) or [])
+        sn_b = set(dict_b.get("agent", {}).get("sensor_names",
+                     dict_b.get("sensor_names", [])) or [])
+        for name in sn_a.symmetric_difference(sn_b):
+            sen_changes.append(("+" if name in sn_b else "-") + f" sensor '{name}'")
+        diffs.append(SubsystemDiff("Sensors", len(sen_changes) > 0, sen_changes))
+
+        # 7. Scenario & Entities comparison
         ent_a = dict_a.get("entities", [])
         ent_b = dict_b.get("entities", [])
         scen_changes = []

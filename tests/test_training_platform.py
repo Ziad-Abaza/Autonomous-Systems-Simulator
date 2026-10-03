@@ -95,11 +95,16 @@ class TestOrchestrator:
         exp_dir = setup["mgr"].create(manifest)
         orch = LocalTrainingOrchestrator(experiments_root=setup["root"])
         run_id = orch.launch(manifest, exp_dir, trainer="dummy")
-        time.sleep(0.5)
+        # Wait for the trainer to actually produce metrics rather than a
+        # fixed sleep — subprocess startup time varies under load.
+        rd = os.path.join(exp_dir, "runs", run_id)
+        deadline = time.time() + 10.0
+        while (not os.path.exists(os.path.join(rd, "metrics.jsonl"))
+               and time.time() < deadline):
+            time.sleep(0.1)
         summary = orch.cancel(exp_dir, run_id)
         assert summary["status"] == RunStatus.CANCELLED
         # artifacts from partial run remain on disk
-        rd = os.path.join(exp_dir, "runs", run_id)
         assert os.path.exists(os.path.join(rd, "metrics.jsonl"))
 
     def test_trainer_whitelist_enforced(self, setup):

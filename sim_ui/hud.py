@@ -8,6 +8,7 @@ import math
 from typing import Dict, Any, List, Optional, Tuple
 import pygame
 import numpy as np
+from sim_ui.theme import C
 
 
 class SimulationHUD:
@@ -34,15 +35,15 @@ class SimulationHUD:
         Returns clickable button rects: [(rect, action_id), ...]
         """
         bar_height = 42
-        pygame.draw.rect(surface, (20, 24, 32, 230), (0, 0, width, bar_height))
-        pygame.draw.line(surface, (45, 55, 70), (0, bar_height), (width, bar_height), 1)
+        pygame.draw.rect(surface, C.bg_deep + (230,), (0, 0, width, bar_height))
+        pygame.draw.line(surface, C.border, (0, bar_height), (width, bar_height), 1)
 
         f_title = fonts['title']
         f_bold = fonts['bold']
         f_small = fonts['small']
 
         # Title / Brand
-        title_surf = f_title.render("AI SIMULATION STUDIO", True, (0, 200, 255))
+        title_surf = f_title.render("AI SIMULATION STUDIO", True, C.vx_centerline)
         surface.blit(title_surf, (15, 10))
 
         buttons = []
@@ -53,8 +54,8 @@ class SimulationHUD:
         for label, mode_id in modes:
             is_active = (active_mode == mode_id)
             btn_rect = pygame.Rect(x_cursor, 7, 120, 28)
-            bg_col = (0, 130, 230) if is_active else (35, 42, 55)
-            txt_col = (255, 255, 255) if is_active else (180, 190, 205)
+            bg_col = C.accent if is_active else C.panel_alt
+            txt_col = C.text if is_active else C.text_dim
             pygame.draw.rect(surface, bg_col, btn_rect, border_radius=4)
             lbl = f_bold.render(label, True, txt_col)
             surface.blit(lbl, (btn_rect.centerx - lbl.get_width() // 2, btn_rect.centery - lbl.get_height() // 2))
@@ -69,8 +70,8 @@ class SimulationHUD:
             active_cam = f"cam_{camera_mode}"
             is_active = (active_cam == cam_id)
             btn_rect = pygame.Rect(x_cursor, 8, 80, 26)
-            bg_col = (50, 100, 150) if is_active else (30, 36, 48)
-            txt_col = (255, 255, 255) if is_active else (150, 160, 175)
+            bg_col = C.accent_soft if is_active else C.panel
+            txt_col = C.text if is_active else C.text_dim
             pygame.draw.rect(surface, bg_col, btn_rect, border_radius=3)
             lbl = f_small.render(label, True, txt_col)
             surface.blit(lbl, (btn_rect.centerx - lbl.get_width() // 2, btn_rect.centery - lbl.get_height() // 2))
@@ -81,18 +82,18 @@ class SimulationHUD:
         server_x = width - 260
         srv_rect = pygame.Rect(server_x, 8, 245, 26)
         if is_client_connected:
-            badge_col = (30, 140, 60)
+            badge_col = C.ok
             status_text = f"EXTERNAL AI CONNECTED ({steps_served} steps)"
         elif is_server_running:
-            badge_col = (180, 130, 20)
+            badge_col = C.warn
             status_text = "AI SERVER LISTENING (Port 8765)"
         else:
-            badge_col = (90, 35, 35)
+            badge_col = C.error
             status_text = "AI SERVER STOPPED"
 
-        pygame.draw.rect(surface, (25, 30, 40), srv_rect, border_radius=4)
+        pygame.draw.rect(surface, C.panel, srv_rect, border_radius=4)
         pygame.draw.circle(surface, badge_col, (server_x + 14, 21), 6)
-        lbl_srv = f_small.render(status_text, True, (220, 225, 235))
+        lbl_srv = f_small.render(status_text, True, C.text)
         surface.blit(lbl_srv, (server_x + 26, 12))
 
         return buttons
@@ -112,57 +113,57 @@ class SimulationHUD:
         """Draws left-side vehicle telemetry overlay."""
         w, h = 260, 240
         pygame.draw.rect(surface, (18, 22, 30, 210), (x, y, w, h), border_radius=6)
-        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h), 1, border_radius=6)
+        pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=6)
 
         f_bold = fonts['bold']
         f_mono = fonts['mono']
         f_small = fonts['small']
 
         # Header
-        surface.blit(f_bold.render("VEHICLE TELEMETRY", True, (0, 200, 255)), (x + 12, y + 10))
+        surface.blit(f_bold.render("VEHICLE TELEMETRY", True, C.vx_centerline), (x + 12, y + 10))
 
         # Speed (km/h and m/s)
         speed_kmh = speed * 3.6
         speed_str = f"{speed_kmh:5.1f} km/h  ({speed:4.1f} m/s)"
-        surface.blit(f_small.render("Speed:", True, (160, 170, 185)), (x + 12, y + 36))
-        surface.blit(f_mono.render(speed_str, True, (255, 255, 255)), (x + 85, y + 36))
+        surface.blit(f_small.render("Speed:", True, C.text_dim), (x + 12, y + 36))
+        surface.blit(f_mono.render(speed_str, True, C.text), (x + 85, y + 36))
 
         # Distance from center
-        surface.blit(f_small.render("Center Dev:", True, (160, 170, 185)), (x + 12, y + 60))
-        lat_col = (100, 255, 100) if abs(lat_offset) < 1.5 else ((255, 200, 50) if abs(lat_offset) < 3.5 else (255, 80, 80))
+        surface.blit(f_small.render("Center Dev:", True, C.text_dim), (x + 12, y + 60))
+        lat_col = C.ok if abs(lat_offset) < 1.5 else (C.warn if abs(lat_offset) < 3.5 else C.error)
         surface.blit(f_mono.render(f"{lat_offset:+5.2f} m", True, lat_col), (x + 110, y + 60))
 
         # Heading error
         head_deg = math.degrees(heading_err)
-        surface.blit(f_small.render("Heading Err:", True, (160, 170, 185)), (x + 12, y + 84))
-        head_col = (100, 255, 100) if abs(head_deg) < 15.0 else ((255, 200, 50) if abs(head_deg) < 40.0 else (255, 80, 80))
+        surface.blit(f_small.render("Heading Err:", True, C.text_dim), (x + 12, y + 84))
+        head_col = C.ok if abs(head_deg) < 15.0 else (C.warn if abs(head_deg) < 40.0 else C.error)
         surface.blit(f_mono.render(f"{head_deg:+5.1f}°", True, head_col), (x + 110, y + 84))
 
         # Laps & Checkpoints
         laps = info.get('laps_completed', 0)
         cps = info.get('checkpoints_passed', 0)
-        surface.blit(f_small.render("Laps / Gates:", True, (160, 170, 185)), (x + 12, y + 108))
-        surface.blit(f_mono.render(f"Lap {laps}  (CP {cps})", True, (240, 240, 240)), (x + 110, y + 108))
+        surface.blit(f_small.render("Laps / Gates:", True, C.text_dim), (x + 12, y + 108))
+        surface.blit(f_mono.render(f"Lap {laps}  (CP {cps})", True, C.text), (x + 110, y + 108))
 
         # Collision status
         is_col = info.get('is_colliding', False)
-        surface.blit(f_small.render("Collision:", True, (160, 170, 185)), (x + 12, y + 132))
+        surface.blit(f_small.render("Collision:", True, C.text_dim), (x + 12, y + 132))
         col_str = "CRASH!" if is_col else "CLEAR"
-        surface.blit(f_bold.render(col_str, True, (255, 50, 50) if is_col else (50, 220, 80)), (x + 110, y + 130))
+        surface.blit(f_bold.render(col_str, True, C.error if is_col else C.ok), (x + 110, y + 130))
 
         # Action inputs meters
         steer, throttle, brake = action[0], action[1], action[2]
-        surface.blit(f_small.render("Steer:", True, (140, 150, 165)), (x + 12, y + 160))
-        self._draw_horizontal_meter(surface, x + 65, y + 165, 80, 8, (steer + 1.0) / 2.0, (80, 160, 255))
-        surface.blit(f_mono.render(f"{steer:+4.2f}", True, (200, 210, 220)), (x + 155, y + 158))
+        surface.blit(f_small.render("Steer:", True, C.text_faint), (x + 12, y + 160))
+        self._draw_horizontal_meter(surface, x + 65, y + 165, 80, 8, (steer + 1.0) / 2.0, C.accent_line)
+        surface.blit(f_mono.render(f"{steer:+4.2f}", True, C.text_dim), (x + 155, y + 158))
 
-        surface.blit(f_small.render("Throttle:", True, (140, 150, 165)), (x + 12, y + 182))
-        self._draw_horizontal_meter(surface, x + 65, y + 187, 80, 8, throttle, (50, 220, 100))
-        surface.blit(f_mono.render(f"{throttle:4.2f}", True, (200, 210, 220)), (x + 155, y + 180))
+        surface.blit(f_small.render("Throttle:", True, C.text_faint), (x + 12, y + 182))
+        self._draw_horizontal_meter(surface, x + 65, y + 187, 80, 8, throttle, C.ok)
+        surface.blit(f_mono.render(f"{throttle:4.2f}", True, C.text_dim), (x + 155, y + 180))
 
-        surface.blit(f_small.render("Brake:", True, (140, 150, 165)), (x + 12, y + 204))
-        self._draw_horizontal_meter(surface, x + 65, y + 209, 80, 8, brake, (255, 70, 70))
-        surface.blit(f_mono.render(f"{brake:4.2f}", True, (200, 210, 220)), (x + 155, y + 202))
+        surface.blit(f_small.render("Brake:", True, C.text_faint), (x + 12, y + 204))
+        self._draw_horizontal_meter(surface, x + 65, y + 209, 80, 8, brake, C.error)
+        surface.blit(f_mono.render(f"{brake:4.2f}", True, C.text_dim), (x + 155, y + 202))
 
     def draw_reward_inspector(
         self,
@@ -176,16 +177,16 @@ class SimulationHUD:
         """Draws live reward decomposition inspector panel."""
         w, h = 300, 280
         pygame.draw.rect(surface, (18, 22, 30, 210), (x, y, w, h), border_radius=6)
-        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h), 1, border_radius=6)
+        pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=6)
 
         f_bold = fonts['bold']
         f_mono = fonts['mono']
         f_small = fonts['small']
 
         # Header with Total Reward
-        surface.blit(f_bold.render("REWARD DECOMPOSITION", True, (0, 200, 255)), (x + 12, y + 10))
+        surface.blit(f_bold.render("REWARD DECOMPOSITION", True, C.vx_centerline), (x + 12, y + 10))
         tot_str = f"{total_accumulated:+7.1f}"
-        tot_lbl = f_mono.render(tot_str, True, (255, 230, 50))
+        tot_lbl = f_mono.render(tot_str, True, C.warn)
         surface.blit(tot_lbl, (x + w - 10 - tot_lbl.get_width(), y + 11))
 
         # Dynamic reward terms from active breakdown
@@ -194,29 +195,29 @@ class SimulationHUD:
         for k, v in breakdown.items():
             if k == 'total':
                 continue
-            col = (80, 220, 120) if v >= 0 else (255, 70, 70)
+            col = C.ok if v >= 0 else C.error
             lbl = k.replace("_", " ").title()[:15]
             terms.append((lbl, v, col))
 
         for label, val, col in terms:
-            surface.blit(f_small.render(label, True, (170, 180, 195)), (x + 12, row_y))
+            surface.blit(f_small.render(label, True, C.text_dim), (x + 12, row_y))
             # Mini bar
             bar_w = int(min(60.0, max(-60.0, val * 15.0)))
             bar_center = x + 180
             if bar_w >= 0:
                 pygame.draw.rect(surface, col, (bar_center, row_y + 3, bar_w, 8))
             else:
-                pygame.draw.rect(surface, (255, 60, 60), (bar_center + bar_w, row_y + 3, -bar_w, 8))
+                pygame.draw.rect(surface, C.error, (bar_center + bar_w, row_y + 3, -bar_w, 8))
 
             val_str = f"{val:+6.2f}"
-            surface.blit(f_mono.render(val_str, True, col if val != 0.0 else (120, 130, 140)), (x + 245, row_y))
+            surface.blit(f_mono.render(val_str, True, col if val != 0.0 else C.text_faint), (x + 245, row_y))
             row_y += 24
 
         # Step total
         step_tot = breakdown.get('total', 0.0)
-        pygame.draw.line(surface, (50, 60, 80), (x + 10, row_y + 4), (x + w - 10, row_y + 4), 1)
-        surface.blit(f_bold.render("Step Total:", True, (240, 240, 240)), (x + 12, row_y + 8))
-        tot_col = (80, 255, 120) if step_tot >= 0 else (255, 80, 80)
+        pygame.draw.line(surface, C.border, (x + 10, row_y + 4), (x + w - 10, row_y + 4), 1)
+        surface.blit(f_bold.render("Step Total:", True, C.text), (x + 12, row_y + 8))
+        tot_col = C.ok if step_tot >= 0 else C.error
         surface.blit(f_mono.render(f"{step_tot:+7.2f}", True, tot_col), (x + 235, row_y + 8))
 
     def draw_camera_pip(
@@ -230,11 +231,11 @@ class SimulationHUD:
         """Renders Picture-in-Picture synthetic camera sensor preview."""
         w, h = 140, 140
         pygame.draw.rect(surface, (18, 22, 30, 230), (x, y, w, h + 24), border_radius=6)
-        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h + 24), 1, border_radius=6)
+        pygame.draw.rect(surface, C.border, (x, y, w, h + 24), 1, border_radius=6)
 
         label = getattr(camera_sensor, "name", "camera").replace(
             "_", " ").upper()
-        surface.blit(fonts['bold'].render(label, True, (0, 200, 255)),
+        surface.blit(fonts['bold'].render(label, True, C.vx_centerline),
                      (x + 10, y + 6))
 
         if camera_sensor and hasattr(camera_sensor, '_last_image') and camera_sensor._last_image is not None:
@@ -259,8 +260,8 @@ class SimulationHUD:
         """Renders bottom episode recording & replay scrubber controls."""
         bar_height = 45
         y = height - bar_height
-        pygame.draw.rect(surface, (20, 24, 32, 230), (0, y, width, bar_height))
-        pygame.draw.line(surface, (45, 55, 70), (0, y), (width, y), 1)
+        pygame.draw.rect(surface, C.bg_deep + (230,), (0, y, width, bar_height))
+        pygame.draw.line(surface, C.border, (0, y), (width, y), 1)
 
         f_bold = fonts['bold']
         f_small = fonts['small']
@@ -268,38 +269,38 @@ class SimulationHUD:
 
         # Record Button
         rec_rect = pygame.Rect(15, y + 8, 120, 28)
-        rec_bg = (180, 40, 40) if is_recording else (40, 50, 65)
+        rec_bg = C.error if is_recording else C.panel_alt
         pygame.draw.rect(surface, rec_bg, rec_rect, border_radius=4)
         rec_text = "REC ● STOP" if is_recording else "RECORD ●"
-        lbl_rec = f_bold.render(rec_text, True, (255, 255, 255))
+        lbl_rec = f_bold.render(rec_text, True, C.text)
         surface.blit(lbl_rec, (rec_rect.centerx - lbl_rec.get_width() // 2, rec_rect.centery - lbl_rec.get_height() // 2))
         buttons.append((rec_rect, "btn_record"))
 
         # Frames count / status
         stat_text = f"Recorded: {frames_recorded} frames" if is_recording else "Ready"
-        surface.blit(f_small.render(stat_text, True, (170, 180, 195)), (145, y + 14))
+        surface.blit(f_small.render(stat_text, True, C.text_dim), (145, y + 14))
 
         # Replay controls if in replay mode
         if replay_mode:
             # Play / Pause
             play_rect = pygame.Rect(320, y + 8, 80, 28)
-            pygame.draw.rect(surface, (0, 130, 220), play_rect, border_radius=4)
-            surface.blit(f_bold.render("PLAY / ||", True, (255, 255, 255)), (play_rect.centerx - 26, play_rect.centery - 8))
+            pygame.draw.rect(surface, C.accent, play_rect, border_radius=4)
+            surface.blit(f_bold.render("PLAY / ||", True, C.text), (play_rect.centerx - 26, play_rect.centery - 8))
             buttons.append((play_rect, "btn_replay_play"))
 
             # Scrubber track
             scrub_x = 420
             scrub_w = width - scrub_x - 120
-            pygame.draw.rect(surface, (50, 60, 75), (scrub_x, y + 18, scrub_w, 8), border_radius=4)
+            pygame.draw.rect(surface, C.border, (scrub_x, y + 18, scrub_w, 8), border_radius=4)
             if total_frames > 0:
                 frac = current_frame / max(1, total_frames - 1)
                 knob_x = int(scrub_x + frac * scrub_w)
-                pygame.draw.circle(surface, (0, 200, 255), (knob_x, y + 22), 8)
-                lbl_f = f_small.render(f"{current_frame}/{total_frames}", True, (220, 220, 220))
+                pygame.draw.circle(surface, C.vx_centerline, (knob_x, y + 22), 8)
+                lbl_f = f_small.render(f"{current_frame}/{total_frames}", True, C.text)
                 surface.blit(lbl_f, (scrub_x + scrub_w + 12, y + 14))
 
         # Keyboard Guide Hint
-        hint = f_small.render("Drive: WASD / Arrow Keys | Reset: R | Camera: C | Toggle Obs: TAB", True, (130, 140, 155))
+        hint = f_small.render("Drive: WASD / Arrow Keys | Reset: R | Camera: C | Toggle Obs: TAB", True, C.text_faint)
         surface.blit(hint, (width - hint.get_width() - 20, y + 14))
 
         return buttons
@@ -316,57 +317,57 @@ class SimulationHUD:
         """Editor side panel showing selected control point properties and actions."""
         w, h = 260, 310
         pygame.draw.rect(surface, (18, 22, 30, 220), (x, y, w, h), border_radius=6)
-        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h), 1, border_radius=6)
+        pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=6)
 
         f_bold = fonts['bold']
         f_small = fonts['small']
         f_mono = fonts['mono']
         buttons = []
 
-        surface.blit(f_bold.render("TRACK PROPERTIES", True, (0, 200, 255)), (x + 12, y + 10))
+        surface.blit(f_bold.render("TRACK PROPERTIES", True, C.vx_centerline), (x + 12, y + 10))
 
         if selected_cp is not None and selected_cp_idx is not None:
-            surface.blit(f_small.render(f"Control Point #{selected_cp_idx}", True, (255, 255, 255)), (x + 12, y + 36))
-            surface.blit(f_mono.render(f"X: {selected_cp.x:6.1f} m  Y: {selected_cp.y:6.1f} m", True, (180, 200, 220)), (x + 12, y + 58))
-            surface.blit(f_mono.render(f"Z (Elev): {selected_cp.z:4.1f} m", True, (180, 200, 220)), (x + 12, y + 80))
-            surface.blit(f_mono.render(f"Width:   {selected_cp.width:4.1f} m", True, (180, 200, 220)), (x + 12, y + 102))
+            surface.blit(f_small.render(f"Control Point #{selected_cp_idx}", True, C.text), (x + 12, y + 36))
+            surface.blit(f_mono.render(f"X: {selected_cp.x:6.1f} m  Y: {selected_cp.y:6.1f} m", True, C.text_dim), (x + 12, y + 58))
+            surface.blit(f_mono.render(f"Z (Elev): {selected_cp.z:4.1f} m", True, C.text_dim), (x + 12, y + 80))
+            surface.blit(f_mono.render(f"Width:   {selected_cp.width:4.1f} m", True, C.text_dim), (x + 12, y + 102))
 
             # Width Adjustment Buttons [-] [+]
             btn_minus_w = pygame.Rect(x + 12, y + 130, 110, 26)
-            pygame.draw.rect(surface, (35, 45, 60), btn_minus_w, border_radius=3)
-            surface.blit(f_small.render("Width -1m", True, (220, 220, 220)), (btn_minus_w.centerx - 30, btn_minus_w.centery - 8))
+            pygame.draw.rect(surface, C.panel_alt, btn_minus_w, border_radius=3)
+            surface.blit(f_small.render("Width -1m", True, C.text), (btn_minus_w.centerx - 30, btn_minus_w.centery - 8))
             buttons.append((btn_minus_w, "cp_width_minus"))
 
             btn_plus_w = pygame.Rect(x + 130, y + 130, 110, 26)
-            pygame.draw.rect(surface, (35, 45, 60), btn_plus_w, border_radius=3)
-            surface.blit(f_small.render("Width +1m", True, (220, 220, 220)), (btn_plus_w.centerx - 30, btn_plus_w.centery - 8))
+            pygame.draw.rect(surface, C.panel_alt, btn_plus_w, border_radius=3)
+            surface.blit(f_small.render("Width +1m", True, C.text), (btn_plus_w.centerx - 30, btn_plus_w.centery - 8))
             buttons.append((btn_plus_w, "cp_width_plus"))
 
             # Elevation Adjustment Buttons [-] [+]
             btn_minus_z = pygame.Rect(x + 12, y + 164, 110, 26)
-            pygame.draw.rect(surface, (35, 45, 60), btn_minus_z, border_radius=3)
-            surface.blit(f_small.render("Elev -0.5m", True, (220, 220, 220)), (btn_minus_z.centerx - 30, btn_minus_z.centery - 8))
+            pygame.draw.rect(surface, C.panel_alt, btn_minus_z, border_radius=3)
+            surface.blit(f_small.render("Elev -0.5m", True, C.text), (btn_minus_z.centerx - 30, btn_minus_z.centery - 8))
             buttons.append((btn_minus_z, "cp_elev_minus"))
 
             btn_plus_z = pygame.Rect(x + 130, y + 164, 110, 26)
-            pygame.draw.rect(surface, (35, 45, 60), btn_plus_z, border_radius=3)
-            surface.blit(f_small.render("Elev +0.5m", True, (220, 220, 220)), (btn_plus_z.centerx - 30, btn_plus_z.centery - 8))
+            pygame.draw.rect(surface, C.panel_alt, btn_plus_z, border_radius=3)
+            surface.blit(f_small.render("Elev +0.5m", True, C.text), (btn_plus_z.centerx - 30, btn_plus_z.centery - 8))
             buttons.append((btn_plus_z, "cp_elev_plus"))
 
             # Delete Point Button
             btn_del = pygame.Rect(x + 12, y + 200, 228, 28)
-            pygame.draw.rect(surface, (150, 40, 40), btn_del, border_radius=4)
-            surface.blit(f_bold.render("DELETE POINT", True, (255, 255, 255)), (btn_del.centerx - 48, btn_del.centery - 8))
+            pygame.draw.rect(surface, C.error, btn_del, border_radius=4)
+            surface.blit(f_bold.render("DELETE POINT", True, C.text), (btn_del.centerx - 48, btn_del.centery - 8))
             buttons.append((btn_del, "cp_delete"))
         else:
-            surface.blit(f_small.render("Click canvas to add points.", True, (160, 170, 180)), (x + 12, y + 45))
-            surface.blit(f_small.render("Click a point to drag/edit.", True, (160, 170, 180)), (x + 12, y + 70))
-            surface.blit(f_small.render("Right click to delete point.", True, (160, 170, 180)), (x + 12, y + 95))
+            surface.blit(f_small.render("Click canvas to add points.", True, C.text_dim), (x + 12, y + 45))
+            surface.blit(f_small.render("Click a point to drag/edit.", True, C.text_dim), (x + 12, y + 70))
+            surface.blit(f_small.render("Right click to delete point.", True, C.text_dim), (x + 12, y + 95))
 
         # Rebuild 3D Track button
         btn_rebuild = pygame.Rect(x + 12, y + 250, 228, 36)
-        pygame.draw.rect(surface, (0, 150, 100), btn_rebuild, border_radius=4)
-        lbl_rb = f_bold.render("REBUILD 3D MESH", True, (255, 255, 255))
+        pygame.draw.rect(surface, C.ok, btn_rebuild, border_radius=4)
+        lbl_rb = f_bold.render("REBUILD 3D MESH", True, C.text)
         surface.blit(lbl_rb, (btn_rebuild.centerx - lbl_rb.get_width() // 2, btn_rebuild.centery - lbl_rb.get_height() // 2))
         buttons.append((btn_rebuild, "track_rebuild"))
 
@@ -374,7 +375,7 @@ class SimulationHUD:
 
     def _draw_horizontal_meter(self, surface: pygame.Surface, x: int, y: int, w: int, h: int, value: float, color: tuple) -> None:
         """Draws small progress/value meter."""
-        pygame.draw.rect(surface, (40, 48, 60), (x, y, w, h), border_radius=2)
+        pygame.draw.rect(surface, C.panel_alt, (x, y, w, h), border_radius=2)
         fill_w = int(max(0.0, min(1.0, value)) * w)
         if fill_w > 0:
             pygame.draw.rect(surface, color, (x, y, fill_w, h), border_radius=2)
@@ -395,26 +396,26 @@ class SimulationHUD:
         """
         w, h = 620, 360
         pygame.draw.rect(surface, (14, 18, 26, 240), (x, y, w, h), border_radius=8)
-        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h), 1, border_radius=8)
+        pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=8)
 
         f_bold = fonts['bold']
         f_small = fonts['small']
         f_mono = fonts['mono']
 
         # Title
-        surface.blit(f_bold.render("OBSERVATION & TELEMETRY INSPECTOR (TAB to close)", True, (0, 210, 255)), (x + 15, y + 10))
-        pygame.draw.line(surface, (45, 55, 75), (x + 10, y + 34), (x + w - 10, y + 34), 1)
+        surface.blit(f_bold.render("OBSERVATION & TELEMETRY INSPECTOR (TAB to close)", True, C.vx_centerline), (x + 15, y + 10))
+        pygame.draw.line(surface, C.border, (x + 10, y + 34), (x + w - 10, y + 34), 1)
 
         col_w = (w - 30) // 2
 
         # --- LEFT: AGENT OBSERVATION ---
         lx = x + 15
-        surface.blit(f_bold.render("[AI OBSERVATION (Policy Input)]", True, (80, 220, 120)), (lx, y + 42))
+        surface.blit(f_bold.render("[AI OBSERVATION (Policy Input)]", True, C.ok), (lx, y + 42))
 
         # Check observation format
         if isinstance(obs, np.ndarray):
             dim = obs.shape[0] if obs.ndim > 0 else 1
-            surface.blit(f_small.render(f"Type: Box({dim},)  |  Dtype: {obs.dtype}", True, (160, 175, 190)), (lx, y + 64))
+            surface.blit(f_small.render(f"Type: Box({dim},)  |  Dtype: {obs.dtype}", True, C.text_dim), (lx, y + 64))
 
             # Display first 10-12 feature values
             row_y = y + 88
@@ -433,26 +434,26 @@ class SimulationHUD:
             for idx in range(min(10, len(feature_names), len(obs))):
                 val = float(obs[idx])
                 name = feature_names[idx] if idx < len(feature_names) else f"feat_{idx}"
-                surface.blit(f_small.render(name, True, (170, 185, 200)), (lx, row_y))
-                surface.blit(f_mono.render(f"{val:+6.3f}", True, (255, 255, 255)), (lx + 130, row_y))
+                surface.blit(f_small.render(name, True, C.text_dim), (lx, row_y))
+                surface.blit(f_mono.render(f"{val:+6.3f}", True, C.text), (lx + 130, row_y))
                 row_y += 22
 
             if dim > 10:
-                surface.blit(f_small.render(f"... + {dim - 10} more features (LiDAR / image)", True, (130, 140, 155)), (lx, row_y + 4))
+                surface.blit(f_small.render(f"... + {dim - 10} more features (LiDAR / image)", True, C.text_faint), (lx, row_y + 4))
 
         elif isinstance(obs, dict):
-            surface.blit(f_small.render("Type: Dict Observation", True, (160, 175, 190)), (lx, y + 64))
+            surface.blit(f_small.render("Type: Dict Observation", True, C.text_dim), (lx, y + 64))
             row_y = y + 88
             for k, v in list(obs.items())[:8]:
                 val_str = f"array{v.shape}" if isinstance(v, np.ndarray) else f"{v}"
-                surface.blit(f_small.render(k, True, (170, 185, 200)), (lx, row_y))
-                surface.blit(f_mono.render(val_str, True, (255, 255, 255)), (lx + 130, row_y))
+                surface.blit(f_small.render(k, True, C.text_dim), (lx, row_y))
+                surface.blit(f_mono.render(val_str, True, C.text), (lx + 130, row_y))
                 row_y += 22
 
         # --- RIGHT: ORACLE TELEMETRY (Privileged Ground Truth) ---
         rx = x + col_w + 15
-        surface.blit(f_bold.render("[ORACLE / DEBUG TELEMETRY]", True, (255, 180, 50)), (rx, y + 42))
-        surface.blit(f_small.render("Privileged state (NEVER sent to AI)", True, (220, 120, 80)), (rx, y + 64))
+        surface.blit(f_bold.render("[ORACLE / DEBUG TELEMETRY]", True, C.warn), (rx, y + 42))
+        surface.blit(f_small.render("Privileged state (NEVER sent to AI)", True, C.error), (rx, y + 64))
 
         oracle_rows = [
             ("Speed (Exact)", f"{info.get('speed', 0.0):.2f} m/s"),
@@ -469,7 +470,7 @@ class SimulationHUD:
 
         row_y = y + 88
         for label, val_str in oracle_rows:
-            surface.blit(f_small.render(label, True, (170, 185, 200)), (rx, row_y))
-            surface.blit(f_mono.render(val_str, True, (255, 230, 80)), (rx + 135, row_y))
+            surface.blit(f_small.render(label, True, C.text_dim), (rx, row_y))
+            surface.blit(f_mono.render(val_str, True, C.warn), (rx + 135, row_y))
             row_y += 22
 

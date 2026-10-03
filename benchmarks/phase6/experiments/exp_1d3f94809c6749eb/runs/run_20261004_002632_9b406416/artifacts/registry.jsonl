@@ -1,0 +1,1 @@
+{"kind": "checkpoint", "path": "checkpoints/policy_final.pt", "created_at": 1791062813.5081, "step": 5120, "metadata": {"algorithm": "ppo", "final": true, "experiment_id": "exp_1d3f94809c6749eb", "run_id": "run_20261004_002632_9b406416", "env_fingerprint": "f7cdd5811a34e2ea8f29c1af8655e5b88cf0b4193be7df4bf2de8d81d26d8322"}}

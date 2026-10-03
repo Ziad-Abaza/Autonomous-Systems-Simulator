@@ -128,3 +128,32 @@ def test_load_agent_dispatch(tmp_path):
     save_checkpoint(agent, str(p))
     loaded = load_agent(str(p))
     assert isinstance(loaded, SACAgent)
+
+
+def test_mixed_trainer_steps_current_env(tmp_path):
+    """Regression: MixedTrackTrainer swaps self.env per track sample — the
+    training loop must step the CURRENT env each iteration. Pre-fix, the
+    captured local went stale and produced step-after-done on every step
+    after the first track switch (E004: 79,593 failure events)."""
+    from agentRL.core.config import TrainConfig
+    from agentRL.train.trainer import MixedTrackTrainer
+    from agentRL.envs.track_registry import TrackRegistry
+
+    reg = TrackRegistry.default()
+    tracks = [reg.load("smoke"), reg.load("oval")]
+    cfg = TrainConfig(total_steps=400, eval_interval=10**9,
+                      ckpt_interval=10**9, num_envs=1, seed=42,
+                      run_dir=str(tmp_path))
+    tr = MixedTrackTrainer(_factory(), tracks, _sac(), cfg)
+    # force alternating tracks so a swap definitely happens
+    keys = list(tr.sampler.envs.keys())
+    calls = {"n": 0}
+    def alt():
+        calls["n"] += 1
+        return tr.sampler.envs[keys[calls["n"] % 2]]
+    tr.sampler.next = alt
+    tr.train()
+    rows = [json.loads(l) for l in
+            open(tmp_path / "metrics.jsonl", encoding="utf-8")]
+    failures = [r for r in rows if r["scope"] == "failure"]
+    assert not failures, f"{len(failures)} step-after-done failures"

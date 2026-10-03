@@ -104,3 +104,15 @@ dependencies → recommended implementation → validation required.
 
 - **Current:** T1–T13 committed; T14 failing in flight; no continual run; E001 pending.
 - **Validation:** continual A→B→C run with retention numbers; experiment matrix executed; E001 gate.
+
+---
+
+# REPAIR-PHASE UPDATE (2026-10-04)
+
+Contract gaps closed: authored handshake, open-track endpoints + completion,
+step-after-done (documented sentinel), headless recording, batch dispatch,
+orphan-channel refusal, packaged build, remote-worker dispatch, scenario
+dead-fields, global_seed, camera near/far/roll, versioning sensor diff,
+HUD theming, scene cap, dirty multi-server pool, recorder vel_body + FIFO
+markers. Remaining partials (7) are listed in the repair report §11 —
+none block research use.

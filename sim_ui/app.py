@@ -339,7 +339,15 @@ class SimulationStudioApp:
     # ------------------------------------------------- training & experiments
 
     def _train_provider(self) -> Dict[str, Any]:
-        """Supplies the inspector TRAIN tab with service-layer state (throttled)."""
+        """Supplies the inspector TRAIN tab with service-layer state.
+
+        ~1 s result cache — the inspector calls this per frame and the
+        uncached path read every manifest, every run.json and the ENTIRE
+        metrics.jsonl each call.
+        """
+        c = getattr(self, "_train_prov_cache", None)
+        if c and (time.time() - c[0]) < 1.0:
+            return c[1]
         exps = self.exp_mgr.list_experiments()
         sel_exp = self.train_state["selected_experiment"]
         if sel_exp is None and exps:
@@ -406,7 +414,7 @@ class SimulationStudioApp:
         except Exception:
             comparison_chart = []
 
-        return {
+        result = {
             "experiments": exps,
             "selected_experiment": sel_exp,
             "selected_algorithm": sel_algo,
@@ -418,9 +426,13 @@ class SimulationStudioApp:
             "comparison_chart": comparison_chart,
             "workers": workers,
         }
+        self.train_state["_workers_cache"] = workers
+        self._train_prov_cache = (time.time(), result)
+        return result
 
     def _train_action(self, prop_id: str) -> None:
         """Dispatches TRAIN tab actions to the application services."""
+        self._train_prov_cache = None  # force refresh after any action
         ts = self.train_state
         try:
             if prop_id == "trn_create":
@@ -576,6 +588,39 @@ class SimulationStudioApp:
                                     ts["selected_experiment"])
                 self.exp_mgr.export(ts["selected_experiment"], dest)
                 self._status(f"Exported experiment to {dest}", "ok")
+
+            elif prop_id == "trn_w_serve":
+                # Launch a local worker service and register it in the
+                # worker registry so batch dispatch can use it.
+                import subprocess
+                from sim_experiment.worker_registry import WorkerRegistry
+                reg = WorkerRegistry(self.exp_mgr.root_dir)
+                port = 9780
+                token = f"ui_{int(time.time()) % 100000}"
+                cmd = [sys.executable, "-m", "sim_experiment.cli",
+                       "--root", self.exp_mgr.root_dir,
+                       "worker-serve", "--port", str(port),
+                       "--token", token]
+                proc = subprocess.Popen(
+                    cmd, cwd=os.path.dirname(self.settings.path),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.train_state["worker_proc"] = proc
+                reg.register(
+                    worker_id=f"local:{port}",
+                    capabilities={"trainers": ["ppo", "sac"],
+                                  "endpoint": f"127.0.0.1:{port}"},
+                    meta={"token": token})
+                self._status(f"Local worker starting on :{port}", "ok")
+
+            elif prop_id.startswith("trn_w_off_"):
+                from sim_experiment.worker_registry import WorkerRegistry
+                idx = int(prop_id.replace("trn_w_off_", ""))
+                workers = ts.get("_workers_cache") or []
+                if idx < len(workers):
+                    wid = workers[idx].get("worker_id")
+                    WorkerRegistry(self.exp_mgr.root_dir).mark_offline(
+                        wid, reason="Marked offline via UI")
+                    self._status(f"Worker {wid} marked offline", "ok")
 
         except Exception as e:
             print(f"[Studio] Training action '{prop_id}' failed: {e}")
@@ -944,7 +989,9 @@ class SimulationStudioApp:
             return
         self._last_recorded_step = self.env.current_step
         st = self.env.vehicle.state
-        info = getattr(self.env, "last_step_info", None) or self.step_info
+        info = dict(getattr(self.env, "last_step_info", None) or self.step_info)
+        info["vel_body_x"] = st.vel_body.x
+        info["vel_body_y"] = st.vel_body.y
         reward = getattr(self.env, "last_step_reward", 0.0)
         self.recorder.record_step(
             step=self.env.current_step,
@@ -982,11 +1029,14 @@ class SimulationStudioApp:
         pos = frame.get("pos", [st.pos.x, st.pos.y, st.pos.z])
         st.pos.x, st.pos.y, st.pos.z = pos[0], pos[1], pos[2]
         st.yaw = frame.get("yaw", st.yaw)
-        # speed is derived from vel_body — set longitudinal velocity directly
+        # vel_body recorded directly (post-repair recordings); legacy files
+        # only carried scalar speed — fall back to vy=0 for those.
         spd = frame.get("speed", 0.0)
-        st.vel_body = Vec2(spd, 0.0)
-        fwd = Vec2(math.cos(st.yaw), math.sin(st.yaw))
-        st.vel_world = fwd * spd
+        vb = frame.get("vel_body")
+        st.vel_body = Vec2(vb[0], vb[1]) if vb else Vec2(spd, 0.0)
+        cy, sy = math.cos(st.yaw), math.sin(st.yaw)
+        st.vel_world = Vec2(cy * st.vel_body.x - sy * st.vel_body.y,
+                            sy * st.vel_body.x + cy * st.vel_body.y)
 
     def _replay_tick(self, dt: float) -> None:
         p = self.replay_player

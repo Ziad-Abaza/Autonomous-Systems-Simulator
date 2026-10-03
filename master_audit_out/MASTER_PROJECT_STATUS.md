@@ -75,3 +75,52 @@ when sensor disabled (validator catches, runtime fills constants).
 - Run RL training: YES (live PPO + SAC runs).
 - Produce a *learning* agent: NO verified evidence anywhere (E001 pending).
 - Standalone distribution: NO.
+
+---
+
+# REPAIR-PHASE UPDATE (2026-10-04)
+
+Implementation/repair pass after the baseline audit. Historical counts above
+reflect the pre-repair state; the report at `docs/REPAIR_IMPLEMENTATION_REPORT.md`
+carries the authoritative post-repair table.
+
+## Post-repair deltas
+
+- Stationary-policy exploit closed (motion-gated rewards) and **learning is now
+  demonstrated**: learn-bench baseline −18 → +797 mean return at 5.24 m/s in
+  6,000 PPO steps (`benchmarks/phase6/benchmark_results.json`), plus agentRL
+  E001c at 9–12 m/s sustained with +207..+694 returns.
+- TCP authored-agent handshake serves the real contract; step-after-done is a
+  documented sentinel, not a bug.
+- Open tracks enforce endpoint bounds and complete; headless recording covers
+  externally-driven TCP episodes including body-frame velocity; FIFO'd
+  recordings are marked truncated rather than silently dropping frames.
+- `cli batch` now delegates to the canonical scheduler; orphaned observation
+  channels are refused at build; inspector dead controls (scenario presets,
+  weather/time, action min/max, camera roll/near/far, spawn point) are wired.
+- Packaging built and executed: `dist/AI_Environment_Simulator` (236.8 MB)
+  serves the authored contract over TCP. Torch remains excluded by design —
+  the single UI evaluate-from-checkpoint path degrades with a clear message.
+- Remote workers verified live on a two-process TCP dispatch (and a real
+  port-bind bug was found and fixed in the process).
+- Dead scenario fields consumed: legacy obstacles spawn, entity errors surface
+  in `info.scenario_warnings`, `target_speed_override` restores its baseline,
+  authored ambient/weather/time mirror onto the render path, `global_seed` is
+  honored via a per-reset SeedSequence.
+- Vehicle dynamics re-validated quantitatively: timestep-independent (30/60 Hz
+  within ~2%), near-reference steady sideslip in the normal regime (3.7° at
+  0.85 g), bounded at-limit transients.
+- HUD theme-completed (82 hardcoded literals → theme tokens); scene list
+  uncapped (scrolls); smoke harness green with exit 0.
+
+## Honest open items
+
+- E002–E010 full-scale matrix: in progress (parallel iteration on E001
+  variants); E001c proves learning but not converged safe driving at 60k.
+- Continual-learning *skill-retention* claim unproven at scale (machinery
+  verified end-to-end via a reduced A→B→C run).
+- PH0-VEH-005 stays PARTIAL: single-track model documented; 4-wheel/Pacejka
+  is a spec overclaim, not a defect to hack.
+- Camera near/far/roll affect the GL offscreen path only — the procedural
+  2.5D fallback rasterizer ignores them (documented).
+- TRAIN/DATA panel per-frame scans and editor gizmos remain PARTIAL.

@@ -73,3 +73,31 @@ reliable research/training/use · **Medium** workaround exists · **Low** qualit
 | B-L10 | Terminology drift: DATA/Datasets/Trn; inspector abbreviations |
 | B-L11 | Missing tests: replay player, dataset scan, recording dest, packaging |
 | B-L12 | README/docs drift: test count says "390+" vs actual 492; phase6 perf numbers pre-VD-fix |
+
+---
+
+# REPAIR-PHASE ADDENDUM (2026-10-04)
+
+Post-audit implementation pass. Historical entries above are preserved verbatim;
+this section records disposition only.
+
+| Blocker | Disposition | Evidence |
+|---------|-------------|----------|
+| B-C1 stationary reward | RESOLVED — motion-gated alignment components; idle −0.02/step, drive +0.42/step; learn-bench 0→5.2 m/s (+797 return) in 6k PPO steps | `tests/test_reward_antiexploit.py` (19), `benchmarks/phase6/benchmark_results.json` |
+| B-C2 packaging | RESOLVED — `sim_project/paths.py` (_MEIPASS/runtime roots), spec datas+hiddenimports, frozen `--module` trainer passthrough, dist build 236.8 MB executed + TCP-verified | `dist/AI_Environment_Simulator/`, packaged handshake/step evidence |
+| HANDSHAKE legacy spaces | RESOLVED — handshake serves authored agent contract | `tests/test_handshake_contract.py` |
+| Open-track end/completion | RESOLVED — endpoint bounds + completion enabled on open templates | `tests/test_track_semantics.py`, template matrix |
+| step-after-done both-flags | CONFIRMED-BY-DESIGN — documented sentinel `invalid_call_after_done`; was a misclassified defect | `tests/test_episode_semantics.py` |
+| headless recording | RESOLVED — externally-driven steps recorded incl. vel_body; FIFO truncation now marked | `tests/test_headless_recording.py` |
+| orphaned obs channels | RESOLVED — runtime refuses unattached sources (was silent constants) | sensor family tests (118) |
+| cli batch inert | RESOLVED — delegates to canonical batch-run scheduler | `tests/test_cli_batch_alias.py` |
+| remote workers unverified | RESOLVED — two-process TCP dispatch verified; found+fixed bind port 0 bug | `experiments/exp_6625d75692531f24` remote run |
+| E001 learning gate | PROGRESS — E001c (60k) returns +207..+694 at 9–12 m/s sustained; collision-bound, not converged | `agentRL/experiments/runs/E001c/` |
+
+## New defects discovered during repair
+- `WorkerService` bound to port 0, silently ignoring `--port` (fixed — real two-process verification uncovered it).
+- `local_roll`/`near_clip`/`far_clip` absent from the camera contract end-to-end (added).
+- `global_seed` bypassed by injected rng (fixed — per-reset SeedSequence over [env_seed, global_seed]).
+- `target_speed_override` leaked across scenario switches (fixed — baseline restore before override).
+- Legacy `ScenarioConfig.obstacles` never spawned; entity errors swallowed (fixed — tagged spawn + `scenario_warnings`).
+- Multi-server pooled envs recycled dirty (fixed — reset on checkout).

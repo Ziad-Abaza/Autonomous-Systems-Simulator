@@ -76,8 +76,10 @@ class EpisodeRecorder:
             return
 
         if len(self.frames) >= self.max_steps:
-            # Memory safeguard
+            # Memory safeguard — drop oldest, but mark the recording so a
+            # FIFO'd file is never mistaken for a complete capture.
             self.frames.pop(0)
+            self._dropped_frames = getattr(self, "_dropped_frames", 0) + 1
 
         frame = {
             'step': step,
@@ -85,6 +87,8 @@ class EpisodeRecorder:
             'pos': [round(p, 3) for p in vehicle_pos],
             'yaw': round(vehicle_yaw, 4),
             'speed': round(speed, 2),
+            'vel_body': [round(float(telemetry.get('vel_body_x', speed)), 3),
+                         round(float(telemetry.get('vel_body_y', 0.0)), 3)],
             'action': [round(a, 3) for a in action],
             'reward': round(reward, 4),
             'breakdown': {k: round(v, 4) for k, v in reward_breakdown.items()},
@@ -98,6 +102,10 @@ class EpisodeRecorder:
         self.is_recording = False
         self.metadata['total_steps'] = len(self.frames)
         self.metadata['termination_reason'] = termination_reason
+        dropped = getattr(self, "_dropped_frames", 0)
+        if dropped:
+            self.metadata['truncated_recording'] = True
+            self.metadata['dropped_frames'] = dropped
         if episode_result:
             self.metadata['episode_result'] = episode_result
 

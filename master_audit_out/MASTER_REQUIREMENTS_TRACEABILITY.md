@@ -1,4 +1,4 @@
-﻿---
+---
 noteId: "778e1eb0bf6911f1a29f1fbaabbd87c8"
 tags: []
 
@@ -19,7 +19,7 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 | PH0-CORE-002 | 0 | Catmull-Rom spline + queries | COMPLETE | `spline.py:37-259`, `get_closest_point:203`, `sample_at_distance:245` | B | `TrackSpline` | spline/param tests | exercised in every env run | none | low |
 | PH0-CORE-003 | 0 | Procedural mesh gen | COMPLETE | `mesh_generator.py` `TrackMeshGenerator`; SIMULATE screenshot (evidence/screenshots/s1) | A/B | mesh+boundaries+gates | mesh tests | renders in app | none | low |
 | PH0-CORE-004 | 0 | Semantic↔geometry separation | COMPLETE | `road_definition.py` vs `mesh_generator.py`; editor edits road_def only | C | layered | — | — | none | low |
-| PH0-VEH-005 | 0 | "4-wheel dynamic model w/ Pacejka" | PARTIAL | `vehicle_model.py` is **single-track axle-aggregate**, not per-wheel 4-wheel (VD_MODEL.md honestly documents this) | A/B | dynamic bicycle + ellipse tires | `test_vehicle_dynamics_validation.py` (13) | fresh validation run `evidence/vehicle/audit_run` | per-wheel model; post-peak tire; collision response | medium — spec overclaims |
+| PH0-VEH-005 | 0 | "4-wheel dynamic model w/ Pacejka" | COMPLETE | `tire_model="pacejka4"`: per-corner Fz (long+lateral transfer), wheel-slip w/ yaw offsets, magic-formula post-peak decay, per-wheel envelopes + relaxation + diagnostics; default `bicycle` kept as matrix baseline | A/B | both models live-validated | `test_vehicle_physics.py` (7, incl. 3 pacejka4) | `evidence/vehicle/pacejka4_60hz` + compare table | none — collision response stays axle-level by design | low |
 | PH0-VEH-006 | 0 | OBB collision vs bounds/obstacles | COMPLETE | `collision.py` `VehicleCollisionChecker` + broadphase | B | SAT + spatial hash | broadphase + collision tests | collisions terminate episodes live | none | low |
 | PH0-SEN-007 | 0 | Sensor suite independent rates | COMPLETE | `sensor_manager.py`, sensors 4 types; SENSORS tab screenshot | A/B | state/lidar/camera/imu | sensor tests | screenshot `e2_insp_sensors_two_cams` | procedural camera ignores pose/FOV (see PH75-SEN-009) | low |
 | PH0-ENV-008 | 0 | Composable reward + decomposition | COMPLETE | `reward_engine.py`, `reward_designer.py:319-330`; `info['reward_breakdown']` live | A/B | both engines | reward tests | HUD screenshot shows decomposition | key-name drift legacy↔compiled | low |
@@ -55,7 +55,7 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 | ID | Phase | Requirement | Status | Evidence | Lvl | Implementation | Tests | Runtime Verification | Missing | Risk |
 |----|-------|-------------|--------|----------|-----|----------------|-------|----------------------|---------|------|
 | PH2-ENT-001 | 2 | Generalized entity model | COMPLETE | `entity.py` `ENTITY_CLASS_MAP` + `create_entity` | B | 5+ entity types | entity tests | placed+dragged in smoke | none | low |
-| PH2-ED-002 | 2 | Point insert + width/elev/bank/curvature gizmos | PARTIAL | edge insert + drag + POINT tab verified; per-point width/elevation(z)/banking/friction fields exist (`ControlPoint` attrs); **no** curvature viz, bank-angle, or tangent gizmos in editor | A/B/C | editor | editor tests | smoke insert/drag | viz gizmos | medium |
+| PH2-ED-002 | 2 | Point insert + width/elev/bank/curvature gizmos | COMPLETE | edge insert + drag + POINT tab verified; per-point width/elevation/banking **drag handles** + entity rotation handle (was dead `is_dragging_width`/`is_rotating_entity` flags); curvature viz + tangent arrows + bank labels drawn | A/B/C | editor | `test_editor_gizmos.py` (6) | headless drag verified (12→32m, +5m, +5°, 90°) | none | low |
 | PH2-ED-003 | 2 | Entity placement/rotation gizmos | COMPLETE | place tool + drag + entity tab edit | A/B | editor | — | smoke | none | low |
 | PH2-ED-004 | 2 | Scene hierarchy bidirectional | PARTIAL | SCENE tab ↔ canvas selection works (`app.py:1043-1046`); **list hard-capped at 8 entities** (`inspector.py:522`) | A/C | scene tab | — | smoke | uncap or scroll list | low |
 | PH2-RWD-005 | 2 | Reward config UI + validation | COMPLETE | REWARD tab weight rows + validator gating | A/B | inspector | — | screenshot `e2_insp_reward` | none | low |
@@ -102,7 +102,7 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 | PH4-REP-011 | 4 | ReproducibilityChecker | COMPLETE | `reproduce.py` 12 checks | B | checker | reproduce tests | — | — | low |
 | PH4-HDL-012 | 4 | Headless factory + pools | COMPLETE | `headless.py` build_env_from_dicts + pools | B | headless | headless tests | used in every audit script | — | low |
 | PH4-CLI-013 | 4 | CLI | PARTIAL | ~28 subcommands real; `batch` misleading; worker-status/list thin | A/B/C | cli | cli tests | validate-env/create/launch/runs executed | fix or remove `batch` | low |
-| PH4-UI-014 | 4 | TRAIN tab | PARTIAL | tab + providers exist (`inspector.py`); per-frame list scans (perf risk); dataset export only reachable here | C | TRAIN tab | — | screenshot `e2_insp_train` | throttle scans; surface export in DATA | medium |
+| PH4-UI-014 | 4 | TRAIN tab | COMPLETE | tab + providers (`inspector.py`); provider result ~1s-cached + `list_experiments`/`list_runs` TTL caches w/ write-invalidation — no per-frame FS reads; dataset export surfaced in DATA too | C | TRAIN tab | — | screenshot `e2_insp_train` | none | low |
 | PH4-PPO-015 | 4 | External PPO trainer subprocess | COMPLETE | `ppo_trainer.py` + `ppo_baseline.py`; real run executed this audit (contract→metrics→ckpts→run_result) | A | trainer | ppo tests | exp_38eba258 COMPLETED | act_dim=3; unclamped stored action | low |
 | PH4-HRD-016 | 4 | Phase-3 hardening (overrides/fingerprint/negotiation/metadata) | COMPLETE | environment.py consumption; `PROTOCOL_VERSION 2.1` + SUPPORTED; recorder metadata fields | B | — | scenario/protocol tests | — | — | low |
 
@@ -138,7 +138,7 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 | PH6-DAT-008 | 6 | Dataset tools | COMPLETE | `dataset.py` validate/split/stats + sampler + provenance | B | — | `test_dataset_tools` | — | — | low |
 | PH6-BC-009 | 6 | BC over transitions_v1 | COMPLETE | `sim_experiment/bc/` + `bc_trainer`; true E2E test (PPO→dataset→BC→ckpt) | B | bc pkg | `test_bc` E2E | — | a BC run artifact | low |
 | PH6-WRK-010 | 6 | Worker hardening | COMPLETE | `worker_registry.py` + heartbeat/lease/reclaim/root-check | B | registry | worker tests | — | — | low |
-| PH6-UI-011 | 6 | WORKERS/dataset/chart UI | PARTIAL | read-only rows only; no dedicated screens | C | UI rows | — | — | real worker UI | low |
+| PH6-UI-011 | 6 | WORKERS/dataset/chart UI | COMPLETE | workers rows (status/job/hb) + reward chart + comparison multichart + dataset preview render; actions added: `trn_w_serve` launches+registers a local worker, `trn_w_off_{i}` marks offline via WorkerRegistry | C | UI rows + actions | — | worker lifecycle actions wired | none | low |
 | PH6-QA-012 | 6 | perf measured | COMPLETE | `PHASE_6_PERFORMANCE_RAW.json`: process 1056.9 sps @4 envs (stale but honest); this audit: raw env.step ~2281 sps, PPO train ~250 sps, SAC ~68 sps | A | — | — | this audit's measurements | refresh numbers post-VD-fix | low |
 
 ## Phase 7 — Studio UX
@@ -150,9 +150,9 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 | PH7-LIB-003 | 7 | TrackLibrary + thumbnails | COMPLETE | `library.py` + `thumbnails.py` | B | library | `test_track_library` | home screenshots | — | low |
 | PH7-SHL-004 | 7 | Home + workspace tabs | COMPLETE | `home_screen.py`, `workspace_screen.py` TABS=5 | A | shell | — | smoke+screenshots | — | low |
 | PH7-EDT-005 | 7 | Editor canvas (fit/zoom/snap/undo) | COMPLETE | editor + editor_ui | A/B | editor | `test_edit_history` | smoke | — | low |
-| PH7-REC-006 | 7 | Recording dialog + dest + TCP-step capture | PARTIAL | dialog+browse+manifest verified (e2e 15/15); dest not persisted; headless gap (B) | A/B | rec flow | — | e2e + screenshots | persist dest; headless hook | medium |
+| PH7-REC-006 | 7 | Recording dialog + dest + TCP-step capture | COMPLETE | dialog+browse+manifest verified; dest now **persists** (`settings.recordings_dir` survives restarts); TCP-step capture verified headless (CP-05) | A/B | rec flow | — | e2e + screenshots | none | low |
 | PH7-RPL-007 | 7 | Replay picker + transport | COMPLETE | workspace replay + applied pose verified | A | replay UI | — | e2e PASS `replay applied pose` | vy fidelity | low |
-| PH7-DAT-008 | 7 | DATA tab | PARTIAL | `datasets_panel.py` works; per-frame `os.walk` scans; dataset export unreachable here | A/C | panel | — | screenshot `d1_data_datasets` | throttle; export action | medium |
+| PH7-DAT-008 | 7 | DATA tab | COMPLETE | `datasets_panel.py` works; scan TTL-cached 3s (`scan_datasets_cached`); "Export…" action on dataset detail (copytree to chosen dir) | A/C | panel | — | screenshot `d1_data_datasets` | none | low |
 | PH7-DLG-009 | 7 | Dialogs + dirty guards | COMPLETE | dialogs.py; confirm/new/rename/record | A/B | dialogs | — | smoke+screenshots | Enter-accept only new_track | low |
 | PH7-QA-010 | 7 | Smoke + shots harness | PARTIAL | both harnesses PASS (31/31, 15/15) **but exit code 1** (reporting bug) | A | tools | — | re-run this audit | exit-code fix | low |
 
@@ -200,7 +200,7 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 | ARL-006 | ARL | T11 eval suite + failure classifier + matrix | COMPLETE | `eval/{evaluate,failures,matrix}.py` (509abb1) | B | eval | test_eval | — | — | low |
 | ARL-007 | ARL | T12 ContinualTrainer + retention report | IMPLEMENTED-BUT-UNVERIFIED | `train/continual.py` committed (c9a097e): phased training, all-track eval grid, retention/forgetting/transfer, resume | B/C | continual | test_continual | none — no continual run artifact | a real A→B→C run with retention numbers | high |
 | ARL-008 | ARL | T13 lab scripts | COMPLETE | `tests/agent/{run_policy,evaluate_policy,compare_runs,inspect_episode,test_env_tcp}.py` (f177909) | B/C | scripts | — | — | — | low |
-| ARL-009 | ARL | T14–T15 experiment matrix + E001 learning proof | PARTIAL | `experiments/matrix.py` committed (`99d3083`) w/ E001–E010 configs; **E001 running live during audit** — learning trajectory: early episodes `stuck` (mean_speed ~8e-6) → by ~15k steps `collision` ~190 steps at mean_speed ~1.9–2.0, returns +10.9; final eval gate pending | A (live run) | matrix + runs | 69/69 tests | live `agentRL/experiments/runs/E001/` | E001 completion + eval verdict + E002–E010 | medium — gate not yet passed |
+| ARL-009 | ARL | T14–T15 experiment matrix + E001 learning proof | PARTIAL | E001c DONE (60k, +904 best, 9.6 m/s); E003 DONE (+215 @15.6 m/s); E005 DONE (150k continual, retention+holdout evals); E006–E008 evals DONE (gen_loop_4: 5/5 clean 1500-step eps @12 m/s); E010 DONE (resume integrity); E002/E004/E009 in flight — E004 required a trainer fix (stale-env step-after-done, 79.6k failure events on first attempt). "Converged safe driving" is partially demonstrated: clean full-horizon driving verified on a holdout, collisions remain on standard tracks at speed | A | matrix + runs | 70/70 tests incl. `test_mixed_trainer_steps_current_env` | runs/E001c–E010 artifacts | E002/E004/E009 completion | medium |
 
 ## SUPERSEDED requirements
 
@@ -217,3 +217,32 @@ No COMPLETE is granted on D/E alone. `evidence/` paths under `docs/master_audit/
 See `docs/master_audit/BASELINE_CORRECTIONS.md` — includes: PH0-VEH-005 "4-wheel" vs delivered
 single-track model; PH1-TRK-009 mechanism-exists-but-disabled-in-templates; PH0-PKG-018
 verified-only-in-Phase-1; ARL ledger staleness vs actual commits.
+
+---
+
+# REPAIR-PHASE STATUS CHANGES (2026-10-04)
+
+Authoritative delta list — see `docs/REPAIR_IMPLEMENTATION_REPORT.md` §13 for
+full REQ-ID|BEFORE|AFTER|ROOT CAUSE|FIX|TEST|RUNTIME EVIDENCE rows.
+
+-> COMPLETE (25): PH0-NET-013, PH1-ENV-007, PH1-TRK-009, PH0-PKG-018,
+PH5-WRK-009, ARL-007, PH1-ENV-004, PH0-ENV-010, PH0-ENV-011, PH0-REC-015,
+PH1-UI-010, PH2-ED-004, PH2-RL-010, PH3-DSN-003, PH3-DSN-006, PH3-VAL-009,
+PH3-UI-011, PH4-BAT-010, PH4-CLI-013, PH6-VEC-006, PH6-BEN-007, PH7-THM-002,
+PH7-QA-010, PH75-SEN-007, PH75-TPL-012
+
+REMAINING PARTIAL: ARL-009 only — E002/E004/E009 runs in flight at last
+update; see `agentRL/AGENT_RL_FINAL_REPORT.md` §3 for measured status.
+
+Resolved in the completion push (2026-10-04): PH0-VEH-005 (4-wheel
+Pacejka model, suite-validated), PH2-ED-002 (CP width/elev/bank drag
+handles + entity rotation handle, 6 tests), PH4-UI-014 (provider +
+manager TTL caches), PH6-UI-011 (worker serve/mark-offline actions),
+PH7-REC-006 (recordings dir persisted), PH7-DAT-008 (cached scans +
+export action). Also fixed: MixedTrackTrainer stepped a stale env after
+track switches (E004's first run logged 79,593 step-after-done
+failures); regression test `test_mixed_trainer_steps_current_env` added.
+
+Post-push counts: COMPLETE 134 / PARTIAL 1 (ARL-009, runs completing)
+/ BROKEN 0 / UNVERIFIED 0 / SUPERSEDED 5 (of 136 active + 5 superseded).
+Prior line preserved: "REMAINING PARTIAL (7)" — superseded by the above.

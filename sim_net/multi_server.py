@@ -188,7 +188,13 @@ class SimServerMulti:
             pass
         if slot in self.clients:
             self.clients.remove(slot)
-            # Env returns to the pool for the next client.
+            # Env returns to the pool for the next client — reset it so a
+            # recycled env never carries over episode state from the
+            # disconnected client.
+            try:
+                slot.env.reset()
+            except Exception:
+                pass
             self._free_envs.append(slot.env)
             print(f"[SimServerMulti] Client {slot.addr} disconnected "
                   f"({len(self.clients)} slots used)")

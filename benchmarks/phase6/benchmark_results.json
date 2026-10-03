@@ -1,0 +1,143 @@
+{
+  "benchmark_name": "phase6_ppo_learning_benchmark",
+  "config": {
+    "name": "phase6_ppo_learning_benchmark",
+    "template": "lane_following",
+    "trainer": "ppo",
+    "env_mode": "inprocess",
+    "random_seed": 42,
+    "eval_seeds": [
+      101,
+      202,
+      303
+    ],
+    "num_eval_episodes": 3,
+    "phases": [
+      {
+        "timesteps": 2000,
+        "rollout_length": 512
+      },
+      {
+        "timesteps": 4000,
+        "rollout_length": 512
+      }
+    ],
+    "training_overrides": {
+      "num_envs": 2,
+      "eval_frequency": 0,
+      "checkpoint_frequency": 0
+    },
+    "thresholds": {
+      "min_reward_delta": 5.0,
+      "stability_tolerance": 10.0
+    },
+    "phase_timeout_s": 1200
+  },
+  "config_hash": "f891108f55cd29b8",
+  "environment": {
+    "sim_version": "unknown",
+    "torch_version": "2.10.0+cpu",
+    "python_version": "3.13.7",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_count": 12,
+    "machine": "AMD64"
+  },
+  "work_dir": "D:\\coding\\projects\\Simulation\\benchmarks\\phase6",
+  "phases": [
+    {
+      "name": "baseline",
+      "timesteps": 0,
+      "eval": {
+        "aggregate": {
+          "episode_count": 3,
+          "mean_reward": -18.01,
+          "std_reward": 0.0,
+          "min_reward": -18.01,
+          "max_reward": -18.01,
+          "completion_rate": 0.0,
+          "collision_rate": 0.0,
+          "off_road_rate": 0.0,
+          "timeout_rate": 1.0,
+          "mean_episode_length": 1801.0,
+          "mean_lateral_error": 0.0,
+          "mean_heading_error": 0.0573,
+          "mean_speed": 0.0
+        },
+        "per_seed": {
+          "101": -18.01,
+          "202": -18.01,
+          "303": -18.01
+        }
+      }
+    },
+    {
+      "name": "phase1",
+      "timesteps": 2000,
+      "run": {
+        "run_id": "run_20261004_002613_a4d938cc",
+        "status": "COMPLETED"
+      },
+      "checkpoint": "D:\\coding\\projects\\Simulation\\benchmarks\\phase6\\experiments\\exp_1d3f94809c6749eb\\runs\\run_20261004_002613_a4d938cc\\checkpoints/policy_final.pt",
+      "sps": 257.3,
+      "wall_clock_s": 12.3,
+      "eval": {
+        "aggregate": {
+          "episode_count": 3,
+          "mean_reward": 475.6641,
+          "std_reward": 0.0,
+          "min_reward": 475.6641,
+          "max_reward": 475.6641,
+          "completion_rate": 0.0,
+          "collision_rate": 1.0,
+          "off_road_rate": 0.0,
+          "timeout_rate": 0.0,
+          "mean_episode_length": 684.0,
+          "mean_lateral_error": 1.5251,
+          "mean_heading_error": 0.146,
+          "mean_speed": 2.4871
+        },
+        "per_seed": {
+          "101": 475.6641,
+          "202": 475.6641,
+          "303": 475.6641
+        }
+      }
+    },
+    {
+      "name": "phase2",
+      "timesteps": 4000,
+      "run": {
+        "run_id": "run_20261004_002632_9b406416",
+        "status": "COMPLETED"
+      },
+      "checkpoint": "D:\\coding\\projects\\Simulation\\benchmarks\\phase6\\experiments\\exp_1d3f94809c6749eb\\runs\\run_20261004_002632_9b406416\\checkpoints/policy_final.pt",
+      "sps": 322.6,
+      "wall_clock_s": 22.2,
+      "eval": {
+        "aggregate": {
+          "episode_count": 3,
+          "mean_reward": 796.8167,
+          "std_reward": 0.0,
+          "min_reward": 796.8167,
+          "max_reward": 796.8167,
+          "completion_rate": 0.0,
+          "collision_rate": 1.0,
+          "off_road_rate": 0.0,
+          "timeout_rate": 0.0,
+          "mean_episode_length": 581.0,
+          "mean_lateral_error": 0.6708,
+          "mean_heading_error": 0.089,
+          "mean_speed": 5.2441
+        },
+        "per_seed": {
+          "101": 796.8167,
+          "202": 796.8167,
+          "303": 796.8167
+        }
+      }
+    }
+  ],
+  "started_at": 1791062757.6014228,
+  "wall_clock_s": 62.4,
+  "finished_at": 1791062819.9984403
+}

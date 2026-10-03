@@ -121,3 +121,14 @@ broken-learning simulator isn't worth shipping yet.
 - **Requirements:** PH7-THM-002 + B-L* (B-M9, B-L3..L6, L10)
 - **Items:** tokenize HUD/editor; ui_scale metrics; keyboard nav; bounded text; terminology; PiP overflow; SCENE cap; dead-code prune; doc refresh (test counts, perf numbers).
 - **Acceptance:** light-theme screenshots all tabs; bounded-text pass.
+
+---
+
+# REPAIR-PHASE UPDATE (2026-10-04)
+
+Stages 1–6 of the staged repair plan executed and verified
+(see `docs/REPAIR_IMPLEMENTATION_REPORT.md`). Stage 7 regression: 550
+tests passing. Open work: E002–E010 full-scale matrix + converged
+safe-driving (ARL-009), 4-wheel/Pacejka envelope (PH0-VEH-005),
+editor gizmos (PH2-ED-002), UI polish rows (PH4-UI-014, PH6-UI-011,
+PH7-REC-006, PH7-DAT-008).

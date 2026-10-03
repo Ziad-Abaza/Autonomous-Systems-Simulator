@@ -1,0 +1,34 @@
+{
+  "run_id": "run_20261004_002632_9b406416",
+  "experiment_id": "exp_1d3f94809c6749eb",
+  "status": "COMPLETED",
+  "seed": 42,
+  "created_at": 1791062792.3154943,
+  "started_at": 1791062792.4033864,
+  "ended_at": 1791062814.4949827,
+  "pid": 26004,
+  "current_timestep": 5120,
+  "episode_count": 4,
+  "latest_metrics": {
+    "final": 1.0,
+    "episodes_completed": 4,
+    "overall_mean_return": 517.56,
+    "collision_rate": 1.0,
+    "off_road_rate": 0.0,
+    "sps": 322.6
+  },
+  "checkpoints": [
+    "checkpoints/policy_final.pt"
+  ],
+  "evaluation_results": [],
+  "replays": [],
+  "resume_from": {
+    "parent_run_id": "run_20261004_002613_a4d938cc",
+    "checkpoint": "D:\\coding\\projects\\Simulation\\benchmarks\\phase6\\experiments\\exp_1d3f94809c6749eb\\runs\\run_20261004_002613_a4d938cc\\checkpoints/policy_final.pt"
+  },
+  "error": null,
+  "exit_code": 0,
+  "trainer": "sim_experiment.trainers.ppo_trainer",
+  "env_mode": "inprocess",
+  "num_envs": 2
+}

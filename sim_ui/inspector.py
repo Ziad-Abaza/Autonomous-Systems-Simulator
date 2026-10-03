@@ -281,6 +281,15 @@ class EnvironmentInspector:
                     props.append(PropertyRow("sen_pitch", "Mount Pitch", "float",
                                              math.degrees(p["local_pitch"]),
                                              -90.0, 90.0, 5.0, unit="°"))
+                    props.append(PropertyRow("sen_roll", "Mount Roll", "float",
+                                             math.degrees(p.get("local_roll", 0.0)),
+                                             -90.0, 90.0, 5.0, unit="°"))
+                    props.append(PropertyRow("sen_near", "Near Clip", "float",
+                                             p.get("near_clip", 0.5),
+                                             0.05, 10.0, 0.05, unit="m"))
+                    props.append(PropertyRow("sen_far", "Far Clip", "float",
+                                             p.get("far_clip", 1000.0),
+                                             50.0, 5000.0, 50.0, unit="m"))
                     props.append(PropertyRow("sen_noise", "Pixel Noise", "float",
                                              p["noise_std"], 0.0, 0.5, 0.02))
                     props.append(PropertyRow("sen_latency", "Latency", "float",
@@ -455,9 +464,11 @@ class EnvironmentInspector:
                                          f"fail={batch.get('failed',0)}"))
                 props.append(PropertyRow("trn_batch_cancel", "Cancel Batch", "action", "CANCEL BATCH"))
 
+            props.append(PropertyRow("trn_head_workers", "--- WORKERS ---", "label", ""))
+            props.append(PropertyRow("trn_w_serve", "Start local worker",
+                                     "action", "SERVE WORKER"))
             workers = data.get("workers") or []
             if workers:
-                props.append(PropertyRow("trn_head_workers", "--- WORKERS ---", "label", ""))
                 for i, wrow in enumerate(workers[:8]):
                     tag = {"RUNNING": "*", "OFFLINE": "!", "IDLE": " "}.get(
                         wrow.get("status"), "?")
@@ -468,6 +479,11 @@ class EnvironmentInspector:
                         f"trn_w_{i}", f"{tag} {str(wrow.get('worker_id'))[:18]}",
                         "label",
                         f"{wrow.get('status','?')} job={job}{hb_txt}"))
+                    if wrow.get("status") != "OFFLINE":
+                        props.append(PropertyRow(
+                            f"trn_w_off_{i}",
+                            f"  Mark offline ({str(wrow.get('worker_id'))[:16]})",
+                            "action", "MARK OFFLINE"))
 
             ds_prev = data.get("dataset_preview")
             if ds_prev:
@@ -519,7 +535,7 @@ class EnvironmentInspector:
             props.append(PropertyRow("sc_cp_info", "Checkpoints", "label", f"{self.road_def.num_checkpoints} gates"))
 
             props.append(PropertyRow("sc_head_ent", f"--- ENTITIES ({len(self.entities)}) ---", "label", ""))
-            for i, ent in enumerate(self.entities[:8]):
+            for i, ent in enumerate(self.entities):
                 props.append(PropertyRow(f"sc_ent_sel_{ent.entity_id}", ent.name, "action", f"SELECT #{ent.entity_id}"))
 
             props.append(PropertyRow("sc_head_add", "--- PLACE NEW ENTITY ---", "label", ""))
@@ -541,6 +557,15 @@ class EnvironmentInspector:
             props.append(PropertyRow("b_has_curbs", "Curb Ribbons", "bool", b.has_curbs))
             props.append(PropertyRow("b_curb_width", "Curb Width", "float", b.curb_width, 0.2, 2.0, 0.1, unit="m"))
             props.append(PropertyRow("b_wall_height", "Wall Height", "float", b.wall_height, 0.3, 3.0, 0.1, unit="m"))
+
+            # Spawn point — sp_* handlers below mutate road_def.spawn_point
+            sp = r.spawn_point
+            props.append(PropertyRow("sp_head", "--- SPAWN POINT ---", "label", ""))
+            props.append(PropertyRow("sp_pos_x", "Spawn X", "float", sp.x, -1000.0, 1000.0, 1.0, unit="m"))
+            props.append(PropertyRow("sp_pos_y", "Spawn Y", "float", sp.y, -1000.0, 1000.0, 1.0, unit="m"))
+            props.append(PropertyRow("sp_elevation", "Spawn Elevation", "float", sp.z, -50.0, 100.0, 0.5, unit="m"))
+            props.append(PropertyRow("sp_yaw", "Spawn Heading", "float", math.degrees(sp.yaw), -180.0, 180.0, 5.0, unit="°"))
+            props.append(PropertyRow("sp_speed", "Initial Speed", "float", sp.initial_speed, 0.0, 60.0, 1.0, unit="m/s"))
 
         # 11. CONTROL POINT
         elif self.active_tab == "POINT":
@@ -682,6 +707,15 @@ class EnvironmentInspector:
                 # params store radians; the row displays degrees
                 deg = math.degrees(cfg.merged_params()["local_pitch"]) + d
                 p["local_pitch"] = math.radians(max(-90.0, min(90.0, deg)))
+            elif prop_id == "sen_roll":
+                deg = math.degrees(cfg.merged_params().get("local_roll", 0.0)) + d
+                p["local_roll"] = math.radians(max(-90.0, min(90.0, deg)))
+            elif prop_id == "sen_near":
+                p["near_clip"] = round(max(0.05, min(10.0,
+                    cfg.merged_params().get("near_clip", 0.5) + d)), 3)
+            elif prop_id == "sen_far":
+                p["far_clip"] = round(max(50.0, min(5000.0,
+                    cfg.merged_params().get("far_clip", 1000.0) + d)), 1)
             elif prop_id == "sen_noise":
                 key = "noise_std"
                 p[key] = round(max(0.0, min(1.0,

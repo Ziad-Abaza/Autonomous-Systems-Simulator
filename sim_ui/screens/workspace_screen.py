@@ -246,19 +246,45 @@ class WorkspaceScreen:
         b = pygame.Rect(x0, body.y + 82, 130, 28)
         button(ctx, b, "Browse file…", "rp_browse")
 
-        # list recordings from the recordings dir
+        # list recordings from the recordings dir — cached ~2 s; the
+        # manifest JSON is also loaded per-entry per frame below, so the
+        # entry list AND subtitles ride on the same bucket.
         rec_dir = app.record_dir
-        entries = []
-        if os.path.isdir(rec_dir):
-            for d in sorted(os.listdir(rec_dir), reverse=True):
-                ep = os.path.join(rec_dir, d, "episode.json")
-                if os.path.exists(ep):
-                    entries.append((d, ep))
-        # legacy root file
-        legacy = os.path.join(os.path.dirname(app.settings.path),
-                              "last_episode.json")
-        if os.path.exists(legacy):
-            entries.append(("last_episode.json (legacy)", legacy))
+        _bucket = int(time.time() / 2.0)
+        if getattr(self, "_rp_bucket", -1) != _bucket \
+                or getattr(self, "_rp_dir", None) != rec_dir:
+            entries = []
+            if os.path.isdir(rec_dir):
+                for d in sorted(os.listdir(rec_dir), reverse=True):
+                    ep = os.path.join(rec_dir, d, "episode.json")
+                    if os.path.exists(ep):
+                        entries.append((d, ep))
+            # legacy root file
+            legacy = os.path.join(os.path.dirname(app.settings.path),
+                                  "last_episode.json")
+            if os.path.exists(legacy):
+                entries.append(("last_episode.json (legacy)", legacy))
+            # Pre-read subtitles so per-frame manifest open() goes away.
+            import json as _json
+            enriched = []
+            for name, path in entries:
+                sec = ""
+                try:
+                    man_path = os.path.join(os.path.dirname(path),
+                                            "manifest.json")
+                    if os.path.exists(man_path):
+                        with open(man_path, "r", encoding="utf-8") as f:
+                            man = _json.load(f)
+                        sec = (f"{man.get('track_name','?')} · "
+                               f"{man.get('steps', 0)} steps")
+                        name = man.get("name", name)
+                except Exception:
+                    pass
+                enriched.append((name, path, sec))
+            self._rp_entries = enriched
+            self._rp_bucket = _bucket
+            self._rp_dir = rec_dir
+        entries = self._rp_entries
 
         y = body.y + 124
         _draw_text(ctx, ctx.fonts.caption, "RECORDED EPISODES",
@@ -273,24 +299,10 @@ class WorkspaceScreen:
                            body.bottom - y - 40)
         content_h = len(entries) * 44 + 8
         off = scroll_begin(ctx, "rp_list", area, content_h)
-        import json as _json
-        for i, (name, path) in enumerate(entries):
+        for i, (name, path, sec) in enumerate(entries):
             r = pygame.Rect(area.x, area.y + i * 44 - off, area.w - 6, 40)
             if r.bottom < area.top or r.top > area.bottom:
                 continue
-            # per-episode manifest → human-readable subtitle
-            sec = ""
-            try:
-                man_path = os.path.join(os.path.dirname(path),
-                                        "manifest.json")
-                if os.path.exists(man_path):
-                    with open(man_path, "r", encoding="utf-8") as f:
-                        man = _json.load(f)
-                    sec = (f"{man.get('track_name','?')} · "
-                           f"{man.get('steps', 0)} steps")
-                    name = man.get("name", name)
-            except Exception:
-                pass
             if not sec:
                 sec = "episode.json"
             right = time.strftime("%m-%d %H:%M",
@@ -368,11 +380,14 @@ class WorkspaceScreen:
         elif action == "ws_record_start":
             app.active_dialog = "record"
         elif action == "rec_browse":
-            # choose destination dir for the pending recording
+            # choose destination dir for the pending recording — persists
+            # so the last-chosen folder survives restarts.
             path = app._tk("askdirectory", initialdir=app.record_dir,
                            title="Recording destination")
             if path:
                 app.record_dir = path
+                app.settings.set_recordings_dir(path)
+                app.settings.save()
                 app.ui_ctx.inputs["rec_dir"]["text"] = path
         elif action == "ws_record_stop":
             app.stop_recording()
@@ -407,6 +422,19 @@ class WorkspaceScreen:
             app.dataset_detail = payload
         elif action == "ds_open_folder":
             app.reveal_in_folder(payload)
+        elif action == "ds_export":
+            # Copy the selected dataset/recording to a user-chosen folder.
+            dest = app._tk("askdirectory", initialdir=payload,
+                           title="Export dataset to…")
+            if dest:
+                try:
+                    import shutil as _sh
+                    tgt = os.path.join(dest, os.path.basename(payload))
+                    _sh.copytree(payload, tgt)
+                    app._status(f"Dataset exported → {tgt}", "ok")
+                    app.reveal_in_folder(tgt)
+                except Exception as e:
+                    app._status(f"Export failed: {e}", "error")
         elif action == "ds_view_replay":
             app.load_replay(payload)
         elif action == "ds_delete":

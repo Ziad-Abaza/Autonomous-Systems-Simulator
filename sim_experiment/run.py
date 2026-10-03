@@ -153,6 +153,12 @@ class RunManager:
             return Run.from_dict(json.load(f))
 
     def list_runs(self, experiment_dir: str) -> List[Dict[str, Any]]:
+        # ~1 s TTL cache — UI panels call this per frame and every run dir
+        # costs a run.json read. Status writes invalidate immediately.
+        bucket = int(time.time() / 1.0)
+        cache = getattr(self, "_runs_cache", {}).get(experiment_dir)
+        if cache and cache[0] == bucket:
+            return [dict(r) for r in cache[1]]
         root = self.runs_root(experiment_dir)
         out: List[Dict[str, Any]] = []
         if not os.path.isdir(root):
@@ -177,7 +183,14 @@ class RunManager:
                 "episode_count": d.get("episode_count", 0),
                 "trainer": d.get("trainer", ""),
             })
+        if not hasattr(self, "_runs_cache"):
+            self._runs_cache = {}
+        self._runs_cache[experiment_dir] = (bucket, out)
         return out
+
+    def _invalidate_runs_cache(self, experiment_dir: str) -> None:
+        if hasattr(self, "_runs_cache"):
+            self._runs_cache.pop(experiment_dir, None)
 
     def set_status(
         self,
@@ -254,3 +267,4 @@ class RunManager:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(run.to_dict(), f, indent=2)
         os.replace(tmp, path)
+        self._invalidate_runs_cache(exp_dir)

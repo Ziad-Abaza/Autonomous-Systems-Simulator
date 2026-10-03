@@ -1,0 +1,398 @@
+{
+  "contract_version": "1.0",
+  "experiment_id": "exp_426213f62c8c8eb1",
+  "experiment_fingerprint": "426213f62c8c8eb1dd02b338a7cd89785cdd32d9e4f231323746a493678b580a",
+  "run_id": "run_20261004_002144_b709cc17",
+  "environment_name": "Proving Ground Oval",
+  "environment_version": "1.0.0",
+  "environment_fingerprint": "b1c336decc28d206ca1e1b9f3a7fefd91cbeb276a68973699060ed9cd2c8742b",
+  "scenario_id": "basic_lane_following",
+  "scenario": {
+    "scenario_id": "basic_lane_following",
+    "name": "Basic Lane Following",
+    "description": "Clean dry conditions, standard lighting, focusing on centerline tracking.",
+    "weather": "clear",
+    "time_of_day": "day",
+    "ambient_light": 1.0,
+    "surface_friction_mult": 1.0,
+    "target_speed_override": 18.0,
+    "time_limit_override": null,
+    "sensor_noise_mult": 1.0,
+    "spawn_override": null,
+    "obstacle_overrides": [],
+    "randomization": {
+      "enabled": false,
+      "global_seed": 42,
+      "parameters": {
+        "vehicle_mass_mult": {
+          "param_name": "vehicle_mass_mult",
+          "distribution": "uniform",
+          "param1": 0.85,
+          "param2": 1.15,
+          "clip_min": 0.5,
+          "clip_max": 2.0
+        },
+        "tire_friction_mult": {
+          "param_name": "tire_friction_mult",
+          "distribution": "uniform",
+          "param1": 0.8,
+          "param2": 1.2,
+          "clip_min": 0.4,
+          "clip_max": 2.0
+        },
+        "surface_friction_mult": {
+          "param_name": "surface_friction_mult",
+          "distribution": "uniform",
+          "param1": 0.75,
+          "param2": 1.1,
+          "clip_min": 0.3,
+          "clip_max": 2.0
+        },
+        "sensor_noise_mult": {
+          "param_name": "sensor_noise_mult",
+          "distribution": "uniform",
+          "param1": 0.5,
+          "param2": 2.0,
+          "clip_min": 0.0,
+          "clip_max": 5.0
+        },
+        "spawn_lateral_jitter_m": {
+          "param_name": "spawn_lateral_jitter_m",
+          "distribution": "uniform",
+          "param1": -1.0,
+          "param2": 1.0,
+          "clip_min": -3.0,
+          "clip_max": 3.0
+        },
+        "spawn_heading_jitter_deg": {
+          "param_name": "spawn_heading_jitter_deg",
+          "distribution": "normal",
+          "param1": 0.0,
+          "param2": 5.0,
+          "clip_min": -30.0,
+          "clip_max": 30.0
+        }
+      }
+    }
+  },
+  "seed": 42,
+  "simulator_version": "4.0.0",
+  "protocol_version": "2.1",
+  "observation_schema": {
+    "flatten_vector": true,
+    "vector_dimension": 23,
+    "include_image": false,
+    "image_channels": [],
+    "num_channels": 8,
+    "channels": [
+      {
+        "name": "speed",
+        "type": "scalar",
+        "shape": [
+          1
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            0.0
+          ],
+          "high": [
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale": 45.0
+        },
+        "source": "vehicle_state:speed",
+        "category": "agent_observation",
+        "description": "Longitudinal forward speed normalized by 45 m/s"
+      },
+      {
+        "name": "velocity_body",
+        "type": "vector",
+        "shape": [
+          2
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            -1.0,
+            -1.0
+          ],
+          "high": [
+            1.0,
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale_x": 45.0,
+          "scale_y": 10.0
+        },
+        "source": "vehicle_state:vel_body",
+        "category": "agent_observation",
+        "description": "Body-frame velocities (vx / 45, vy / 10)"
+      },
+      {
+        "name": "yaw_rate",
+        "type": "scalar",
+        "shape": [
+          1
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            -1.0
+          ],
+          "high": [
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale": 3.0
+        },
+        "source": "vehicle_state:yaw_rate",
+        "category": "agent_observation",
+        "description": "Angular yaw velocity normalized by 3.0 rad/s"
+      },
+      {
+        "name": "steering_angle",
+        "type": "scalar",
+        "shape": [
+          1
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            -1.0
+          ],
+          "high": [
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale": 0.6
+        },
+        "source": "vehicle_state:steering_angle",
+        "category": "agent_observation",
+        "description": "Current front road wheel angle normalized by max steer (0.6 rad)"
+      },
+      {
+        "name": "distance_from_center",
+        "type": "scalar",
+        "shape": [
+          1
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            -1.0
+          ],
+          "high": [
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale_half_width": 1.0
+        },
+        "source": "vehicle_state:distance_from_center",
+        "category": "agent_observation",
+        "description": "Lateral deviation from track centerline normalized to half road width"
+      },
+      {
+        "name": "heading_error",
+        "type": "scalar",
+        "shape": [
+          1
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            -1.0
+          ],
+          "high": [
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale": 3.141592653589793
+        },
+        "source": "vehicle_state:heading_error",
+        "category": "agent_observation",
+        "description": "Angle between vehicle heading and track centerline tangent normalized by pi"
+      },
+      {
+        "name": "distance_to_checkpoint",
+        "type": "scalar",
+        "shape": [
+          1
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            0.0
+          ],
+          "high": [
+            1.0
+          ]
+        },
+        "normalization": "scale",
+        "norm_params": {
+          "scale": 100.0
+        },
+        "source": "vehicle_state:distance_to_checkpoint",
+        "category": "agent_observation",
+        "description": "Euclidean distance to next checkpoint gate capped at 100 m"
+      },
+      {
+        "name": "lidar_ranges",
+        "type": "vector",
+        "shape": [
+          15
+        ],
+        "dtype": "float32",
+        "range": {
+          "low": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "high": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "normalization": "none",
+        "norm_params": {},
+        "source": "lidar_rays:ranges_norm",
+        "category": "agent_observation",
+        "description": "15 normalized planar LiDAR range measurements [0: impact, 1: clear]"
+      }
+    ]
+  },
+  "action_schema": {
+    "space_type": "continuous",
+    "num_channels": 3,
+    "channels": [
+      {
+        "name": "steering",
+        "type": "continuous",
+        "min": -1.0,
+        "max": 1.0,
+        "default": 0.0,
+        "scaling": 1.0,
+        "dead_zone": 0.02,
+        "rate_limit": 4.0,
+        "description": "Normalized steering command [-1: full left, +1: full right]"
+      },
+      {
+        "name": "throttle",
+        "type": "continuous",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.0,
+        "scaling": 1.0,
+        "dead_zone": 0.01,
+        "rate_limit": 5.0,
+        "description": "Forward throttle command [0: idle, 1: full drive force]"
+      },
+      {
+        "name": "brake",
+        "type": "continuous",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.0,
+        "scaling": 1.0,
+        "dead_zone": 0.01,
+        "rate_limit": 6.0,
+        "description": "Braking force command [0: released, 1: full brake]"
+      }
+    ],
+    "num_discrete_actions": 0,
+    "discrete_actions": []
+  },
+  "curriculum": null,
+  "curriculum_fingerprint": "",
+  "training": {
+    "algorithm": "ppo",
+    "total_timesteps": 4096,
+    "rollout_length": 1024,
+    "batch_size": 256,
+    "epochs": 4,
+    "learning_rate": 0.0003,
+    "discount_factor": 0.99,
+    "gae_lambda": 0.95,
+    "eval_frequency": 0,
+    "checkpoint_frequency": 10000,
+    "logging_frequency": 1,
+    "num_envs": 1,
+    "max_wall_seconds": 0.0,
+    "algorithm_config": {
+      "trajectory_episodes": 4
+    }
+  },
+  "evaluation": {
+    "eval_seeds": [
+      42
+    ],
+    "num_episodes": 5,
+    "deterministic_policy": true,
+    "scenario_id": null
+  },
+  "env_mode": "inprocess",
+  "tcp": {
+    "host": "127.0.0.1",
+    "ports": []
+  },
+  "paths": {
+    "experiment_dir": "../..",
+    "run_dir": ".",
+    "environment_json": "../../environment.json",
+    "scenario_json": "../../scenario.json",
+    "metrics_file": "metrics.jsonl",
+    "checkpoints_dir": "checkpoints",
+    "evaluation_dir": "evaluation",
+    "trajectories_dir": "trajectories",
+    "replays_dir": "replays",
+    "logs_dir": "logs",
+    "run_result": "run_result.json"
+  },
+  "resume": null,
+  "capabilities": [
+    "metrics_jsonl",
+    "checkpoints",
+    "evaluation",
+    "trajectories",
+    "replays"
+  ]
+}

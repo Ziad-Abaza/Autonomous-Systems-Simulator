@@ -255,3 +255,13 @@ buffers/no timeouts · ppo_train eager torch import · stale docs numbers.
 | Generalize to unseen tracks? | NO — eval matrix exists; never run |
 | Diagnose failures? | PARTIALLY — failure classifier + termination reasons exist; not exercised on real runs |
 | Distribute standalone? | **NO** — packaging broken |
+
+---
+
+# REPAIR-PHASE ADDENDUM (2026-10-04)
+
+An implementation/repair pass followed this audit. 25 requirements moved to
+COMPLETE with runtime evidence; 4 BROKEN and 2 UNVERIFIED all resolved;
+7 PARTIAL remain (non-blocking). Full report + evidence index:
+`docs/REPAIR_IMPLEMENTATION_REPORT.md`. Post-repair counts:
+COMPLETE 128 / PARTIAL 7 / BROKEN 0 / UNVERIFIED 0 / SUPERSEDED 5.

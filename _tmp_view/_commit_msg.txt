@@ -1,0 +1,26 @@
+feat(physics): vehicle & environment physics realism repair
+
+- low-speed blend now keys on total speed: a high-speed slide that
+  scrubbed |vx| below the threshold disabled all lateral tire force,
+  leaving the car gliding sideways for 15+ s (the lateral-freeze defect)
+- tire model: relaxation length, load sensitivity, pneumatic trail -
+  restores self-aligning recovery in saturated slides; optional
+  pacejka4 4-wheel path with lateral load transfer
+- aero drag on the velocity vector (per-axis), quasi-static roll/pitch,
+  static-friction hold at rest, normal loads scaled by road-plane tilt
+- surface physics wired end-to-end: control-point friction propagates
+  through the spline to per-step query_surface (road/curb/off-road),
+  banking/grade enter as world-frame gravity bias excluded from
+  proper acceleration; IMU projects gravity through roll/pitch
+- collision: interior-oriented depenetration + inelastic impulse with
+  Coulomb friction and yaw arm; open-route end tolerance fixes
+  spawn-on-start-line off-road termination
+- renderer: ground plane sunk below track min elevation - it occluded
+  any road authored below z=-0.05 (roads visually vanished into grass)
+- tools/vehicle_dynamics/v_suite.py: V01-V22 standards-aligned checks
+  (J266 understeer, ISO 7401 step metrics, contact response, timestep,
+  determinism) + regression tests + regenerated benchmark evidence
+
+Generated with [Devin](https://devin.ai)
+
+Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>

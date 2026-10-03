@@ -112,6 +112,22 @@ def scan_datasets(roots: List[str]) -> List[Dict[str, Any]]:
     return found
 
 
+# Time-bucketed scan cache — os.walk + per-dir manifest reads + _dir_size
+# are far too expensive to re-run at frame rate. 3 s staleness is fine for
+# a browsing panel.
+_SCAN_CACHE: Dict[str, Any] = {"bucket": -1, "roots": None, "result": []}
+
+
+def scan_datasets_cached(roots: List[str], ttl_s: float = 3.0) -> List[Dict[str, Any]]:
+    bucket = int(time.time() / ttl_s)
+    roots_key = tuple(os.path.normpath(r) for r in roots)
+    if _SCAN_CACHE["bucket"] == bucket and _SCAN_CACHE["roots"] == roots_key:
+        return _SCAN_CACHE["result"]
+    res = scan_datasets(list(roots_key))
+    _SCAN_CACHE.update(bucket=bucket, roots=roots_key, result=res)
+    return res
+
+
 def draw_datasets_browser(ctx: UIContext, body: pygame.Rect, app) -> None:
     x0, y0 = body.x + 24, body.y + 20
     _draw_text(ctx, ctx.fonts.h1, "Datasets & Recordings", T.C.text, x0, y0)
@@ -125,7 +141,7 @@ def draw_datasets_browser(ctx: UIContext, body: pygame.Rect, app) -> None:
     # also experiments dir under repo (independent of data_root)
     roots.append(os.path.abspath(
         os.path.join(os.path.dirname(app.settings.path), "experiments")))
-    datasets = scan_datasets(roots)
+    datasets = scan_datasets_cached(roots)
 
     list_w = min(560, body.w - 48)
     detail_x = x0 + list_w + 20
@@ -238,8 +254,12 @@ def _draw_dataset_detail(ctx: UIContext, app, x: int, y: int, w: int) -> None:
         x_btn = rect.x + 12
     button(ctx, pygame.Rect(x_btn, by, 120, 28),
            "Open Folder", "ds_open_folder", path)
+    x_btn += 128
+    button(ctx, pygame.Rect(x_btn, by, 100, 28),
+           "Export…", "ds_export", path)
+    x_btn += 108
     if rep:
-        button(ctx, pygame.Rect(x_btn + 128, by, 110, 28),
+        button(ctx, pygame.Rect(x_btn, by, 110, 28),
                "Open Source", "ds_open_source", path)
     button(ctx, pygame.Rect(rect.right - 92, by, 80, 28),
            "Delete…", "ds_delete", path, style="danger")
