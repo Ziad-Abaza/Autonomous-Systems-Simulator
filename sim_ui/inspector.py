@@ -315,20 +315,59 @@ class EnvironmentInspector:
                                          f"fail={batch.get('failed',0)}"))
                 props.append(PropertyRow("trn_batch_cancel", "Cancel Batch", "action", "CANCEL BATCH"))
 
-            ds = data.get("dataset_report")
-            if ds:
-                props.append(PropertyRow("trn_head_ds", "--- DATASET ---", "label", ""))
-                props.append(PropertyRow("trn_ds_eps", "Episodes", "label", str(ds.get("episodes", 0))))
-                props.append(PropertyRow("trn_ds_steps", "Steps", "label", str(ds.get("steps", 0))))
-                props.append(PropertyRow("trn_ds_skip", "Skipped", "label",
-                                         str(sum(ds.get("skipped", {}).values()))))
+            workers = data.get("workers") or []
+            if workers:
+                props.append(PropertyRow("trn_head_workers", "--- WORKERS ---", "label", ""))
+                for i, wrow in enumerate(workers[:8]):
+                    tag = {"RUNNING": "*", "OFFLINE": "!", "IDLE": " "}.get(
+                        wrow.get("status"), "?")
+                    job = wrow.get("job") or "-"
+                    hb = wrow.get("heartbeat_age_s")
+                    hb_txt = f" hb={hb}s" if hb is not None else ""
+                    props.append(PropertyRow(
+                        f"trn_w_{i}", f"{tag} {str(wrow.get('worker_id'))[:18]}",
+                        "label",
+                        f"{wrow.get('status','?')} job={job}{hb_txt}"))
 
-            cmp_data = data.get("comparison")
-            if cmp_data and cmp_data.get("series"):
+            ds_prev = data.get("dataset_preview")
+            if ds_prev:
+                props.append(PropertyRow("trn_head_ds", "--- DATASET ---", "label", ""))
+                props.append(PropertyRow("trn_ds_valid", "Validation", "label",
+                                         "VALID" if ds_prev.get("valid") else "INVALID"))
+                stats = ds_prev.get("stats") or {}
+                props.append(PropertyRow("trn_ds_eps", "Episodes", "label",
+                                         str(stats.get("episode_count", 0))))
+                props.append(PropertyRow("trn_ds_steps", "Steps", "label",
+                                         str(stats.get("step_count", 0))))
+                ret = stats.get("return") or {}
+                props.append(PropertyRow("trn_ds_ret", "Return mean±std", "label",
+                                         f"{ret.get('mean', 0):.2f}±{ret.get('std', 0):.2f}"))
+                reasons = stats.get("termination_reasons") or {}
+                for i, (rsn, cnt) in enumerate(
+                        sorted(reasons.items(), key=lambda kv: -kv[1])[:3]):
+                    props.append(PropertyRow(f"trn_ds_r_{i}", rsn[:20], "label", str(cnt)))
+                for i, ep in enumerate(ds_prev.get("episodes", [])[:6]):
+                    props.append(PropertyRow(
+                        f"trn_ds_e_{i}",
+                        f"  {ep.get('episode_id','?')[:16]}", "label",
+                        f"r={ep.get('total_return',0):.1f} "
+                        f"n={ep.get('length',0)}"))
+
+            cmp_chart = data.get("comparison_chart") or []
+            if cmp_chart:
                 props.append(PropertyRow("trn_head_cmp", "--- COMPARISON (reward) ---", "label", ""))
-                for i, s in enumerate(cmp_data["series"][:4]):
+                props.append(PropertyRow("trn_cmp_chart", "Smoothed reward",
+                                         "multichart", cmp_chart))
+                for i, s in enumerate(cmp_chart[:4]):
                     props.append(PropertyRow(f"trn_cmp_{i}", s["label"][:20], "label",
-                                             f"mean={s['mean']:.1f} best={s['max']:.1f}"))
+                                             f"last={s['data'][-1]:.1f}" if s["data"] else "-"))
+            else:
+                cmp_data = data.get("comparison")
+                if cmp_data and cmp_data.get("series"):
+                    props.append(PropertyRow("trn_head_cmp", "--- COMPARISON (reward) ---", "label", ""))
+                    for i, s in enumerate(cmp_data["series"][:4]):
+                        props.append(PropertyRow(f"trn_cmp_{i}", s["label"][:20], "label",
+                                                 f"mean={s['mean']:.1f} best={s['max']:.1f}"))
             if sel_exp:
                 props.append(PropertyRow("trn_compare", "Compare Runs", "action", "COMPARE"))
 
@@ -677,6 +716,44 @@ class EnvironmentInspector:
                         py = chart.bottom - 2 - (v - lo) / span * (chart.h - 4)
                         pts.append((px, py))
                     pygame.draw.lines(surface, (0, 210, 255), False, pts, 1)
+
+            elif p.prop_type == "multichart":
+                # Multi-series comparison chart on a SHARED scale — the point
+                # of a comparison view is a common axis.
+                chart = pygame.Rect(x + w - 150, row_y + 2, 138, 18)
+                pygame.draw.rect(surface, (20, 26, 36), chart, border_radius=2)
+                series_list = [
+                    [float(v) for v in (s.get("data") or [])
+                     if isinstance(v, (int, float))]
+                    for s in (p.current_value or []) if isinstance(s, dict)
+                ]
+                flat = [v for s in series_list for v in s]
+                if flat:
+                    lo, hi = min(flat), max(flat)
+                    span = (hi - lo) or 1.0
+                    # Axis frame + min/max ticks.
+                    pygame.draw.line(surface, (60, 70, 90),
+                                     (chart.left, chart.bottom),
+                                     (chart.right, chart.bottom), 1)
+                    hi_txt = f_small.render(f"{hi:.0f}", True, (110, 120, 140))
+                    lo_txt = f_small.render(f"{lo:.0f}", True, (110, 120, 140))
+                    surface.blit(hi_txt, (chart.left - hi_txt.get_width() - 2,
+                                          chart.top - 3))
+                    surface.blit(lo_txt, (chart.left - lo_txt.get_width() - 2,
+                                          chart.bottom - lo_txt.get_height() + 1))
+                    colors = [(0, 210, 255), (255, 170, 60), (120, 255, 120),
+                              (255, 100, 180)]
+                    for si, vals in enumerate(series_list[:4]):
+                        if len(vals) < 2:
+                            continue
+                        vals = vals[-60:]
+                        pts = []
+                        for i, v in enumerate(vals):
+                            px = chart.x + 2 + i * (chart.w - 4) / max(1, len(vals) - 1)
+                            py = chart.bottom - 2 - (v - lo) / span * (chart.h - 4)
+                            pts.append((px, py))
+                        pygame.draw.lines(
+                            surface, colors[si % len(colors)], False, pts, 1)
 
             elif p.prop_type == "label":
                 lbl_v = f_small.render(str(p.current_value), True, (150, 160, 175))

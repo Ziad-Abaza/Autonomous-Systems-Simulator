@@ -353,11 +353,38 @@ class SimulationStudioApp:
 
         batch_status = None
         batch_rec = self.train_state.get("batch")
+        workers = []
         if batch_rec:
             try:
                 batch_status = batch_rec["scheduler"].status(batch_rec["batch_id"])
+                from sim_ui.train_providers import worker_rows
+                workers = worker_rows(scheduler=batch_rec["scheduler"])
             except Exception:
                 batch_status = None
+        if not workers:
+            try:
+                from sim_experiment.worker_registry import WorkerRegistry
+                from sim_ui.train_providers import worker_rows
+                workers = worker_rows(
+                    registry=WorkerRegistry(self.exp_mgr.root_dir))
+            except Exception:
+                workers = []
+
+        dataset_preview = None
+        ds_dir = self.train_state.get("dataset_dir")
+        if ds_dir:
+            try:
+                from sim_ui.train_providers import dataset_preview as _dp
+                dataset_preview = _dp(ds_dir)
+            except Exception:
+                dataset_preview = None
+
+        try:
+            from sim_ui.train_providers import comparison_to_multichart
+            comparison_chart = comparison_to_multichart(
+                self.train_state.get("comparison"))
+        except Exception:
+            comparison_chart = []
 
         return {
             "experiments": exps,
@@ -366,7 +393,10 @@ class SimulationStudioApp:
             "selected_run": sel_run,
             "batch_status": batch_status,
             "dataset_report": self.train_state.get("dataset_report"),
+            "dataset_preview": dataset_preview,
             "comparison": self.train_state.get("comparison"),
+            "comparison_chart": comparison_chart,
+            "workers": workers,
         }
 
     def _train_action(self, prop_id: str) -> None:
@@ -433,6 +463,7 @@ class SimulationStudioApp:
                 rd = self.run_mgr.run_dir(exp_dir, ts["selected_run_id"])
                 out = os.path.join(rd, "dataset_export")
                 ts["dataset_report"] = export_dataset(rd, out)
+                ts["dataset_dir"] = out
                 print(f"[Studio] Dataset exported: "
                       f"{ts['dataset_report']['episodes']} episodes, "
                       f"{ts['dataset_report']['steps']} steps -> {out}")
