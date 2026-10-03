@@ -80,3 +80,8 @@ recordings/
 *.rec.json.gz
 
 .superpowers/
+
+# Phase 7 studio user data
+tracks/
+data/
+studio_settings.json
