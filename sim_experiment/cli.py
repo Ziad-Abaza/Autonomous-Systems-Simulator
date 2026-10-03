@@ -170,8 +170,23 @@ def cmd_batch_run(args) -> int:
     mgr = _mgr(args)
     manifest = mgr.load(args.experiment_id)
     exp_dir = mgr.experiment_dir(args.experiment_id)
-    scheduler = BatchScheduler(experiments_root=args.root,
-                               max_workers=args.workers)
+    if getattr(args, "worker", None):
+        if not getattr(args, "token", None):
+            print("--worker requires --token")
+            return 1
+        from sim_experiment.remote_worker import RemoteWorkerAdapter
+        from sim_experiment.scheduler import Worker
+        host, _, port_s = args.worker.rpartition(":")
+        adapter = RemoteWorkerAdapter(host, int(port_s), args.token)
+        adapter.register()
+        scheduler = BatchScheduler(
+            experiments_root=args.root,
+            workers=[Worker(worker_id=f"remote_{args.worker}",
+                            capabilities=adapter.capabilities(),
+                            adapter=adapter)])
+    else:
+        scheduler = BatchScheduler(experiments_root=args.root,
+                                   max_workers=args.workers)
     batch = scheduler.create_batch(
         manifest, exp_dir,
         specs=expand_run_specs(manifest, seeds=args.seeds,
@@ -391,6 +406,78 @@ def cmd_archive(args) -> int:
     return 0
 
 
+def cmd_learn_bench(args) -> int:
+    from benchmarks.phase6.benchmark_runner import run_benchmark
+    from sim_experiment.convergence import convergence_report
+    with open(args.config, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    results = run_benchmark(config, work_dir=args.work_dir)
+    report = convergence_report(results)
+    _print_json(report)
+    print(f"Results: {results['work_dir']}/benchmark_results.json")
+    return 0 if report.get("verdict") != "regressed" else 1
+
+
+def cmd_dataset_validate(args) -> int:
+    from sim_experiment.dataset import validate_dataset
+    rep = validate_dataset(args.dataset_dir)
+    _print_json(rep)
+    return 0 if rep["valid"] else 1
+
+
+def cmd_dataset_split(args) -> int:
+    from sim_experiment.dataset import split_dataset
+    ratios = {"train": 1.0 - args.val_frac - args.test_frac,
+              "val": args.val_frac, "test": args.test_frac}
+    splits = split_dataset(args.dataset_dir, seed=args.seed, ratios=ratios)
+    _print_json({k: len(v) for k, v in splits.items()})
+    return 0
+
+
+def cmd_dataset_stats(args) -> int:
+    from sim_experiment.dataset_inspect import inspect_dataset
+    _print_json(inspect_dataset(args.dataset_dir))
+    return 0
+
+
+def cmd_train_bc(args) -> int:
+    mgr = _mgr(args)
+    manifest = mgr.load(args.experiment_id)
+    exp_dir = mgr.experiment_dir(args.experiment_id)
+    alg_cfg = {"bc_epochs": args.epochs, "val_ratio": args.val_frac}
+    if manifest.training.algorithm != "bc":
+        # Override the algorithm to bc for this run; the dataset carries the
+        # learned behavior, the experiment pins env/scenario fingerprints.
+        manifest.training.algorithm = "bc"
+    orch = LocalTrainingOrchestrator(experiments_root=args.root)
+    run_id = orch.launch(
+        manifest, exp_dir, trainer="bc",
+        run_overrides={"bc_dataset_dir": args.dataset,
+                       "seed": args.seed,
+                       "algorithm_config": alg_cfg})
+    mgr.mark_launched(args.experiment_id)
+    print(f"Launched BC run {run_id} on dataset {args.dataset}")
+    if args.wait:
+        summary = orch.wait(exp_dir, run_id, timeout_s=args.wait)
+        print(f"status: {summary['status']}")
+        return 0 if summary["status"] == "COMPLETED" else 1
+    return 0
+
+
+def cmd_worker_register(args) -> int:
+    from sim_experiment.remote_worker import RemoteWorkerAdapter
+    resp = RemoteWorkerAdapter(args.host, args.port, args.token).register()
+    _print_json(resp)
+    return 0
+
+
+def cmd_worker_list(args) -> int:
+    from sim_experiment.remote_worker import RemoteWorkerAdapter
+    resp = RemoteWorkerAdapter(args.host, args.port, args.token).handshake()
+    _print_json(resp.get("capabilities", {}))
+    return 0
+
+
 def cmd_benchmark(args) -> int:
     import numpy as np
     from sim_env.templates import EnvironmentTemplateManager
@@ -474,7 +561,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("launch")
     s.add_argument("experiment_id")
     s.add_argument("--trainer", default="ppo")
-    s.add_argument("--env-mode", default="inprocess", choices=["inprocess", "tcp"])
+    s.add_argument("--env-mode", default="inprocess",
+                   choices=["inprocess", "process", "tcp", "tcp_multi"])
     s.add_argument("--wait", type=float, default=0, help="Wait up to N seconds for completion")
     s.set_defaults(fn=cmd_launch)
 
@@ -489,8 +577,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seeds", type=int, nargs="*", default=None)
     s.add_argument("--scenarios", nargs="*", default=None)
     s.add_argument("--trainer", default="ppo")
-    s.add_argument("--env-mode", default="inprocess", choices=["inprocess", "tcp"])
+    s.add_argument("--env-mode", default="inprocess",
+                   choices=["inprocess", "process", "tcp", "tcp_multi"])
     s.add_argument("--workers", type=int, default=2)
+    s.add_argument("--worker", default=None,
+                   help="remote worker host:port (uses --token)")
+    s.add_argument("--token", default=None,
+                   help="shared token for --worker / worker commands")
     s.add_argument("--max-retries", type=int, default=0)
     s.add_argument("--timeout", type=float, default=600.0)
     s.set_defaults(fn=cmd_batch_run)
@@ -585,6 +678,48 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--steps", type=int, default=2000)
     s.add_argument("--template", default=None)
     s.set_defaults(fn=cmd_benchmark)
+
+    s = sub.add_parser("learn-bench")
+    s.add_argument("--config", required=True)
+    s.add_argument("--work-dir", default=None)
+    s.set_defaults(fn=cmd_learn_bench)
+
+    s = sub.add_parser("dataset-validate")
+    s.add_argument("dataset_dir")
+    s.set_defaults(fn=cmd_dataset_validate)
+
+    s = sub.add_parser("dataset-split")
+    s.add_argument("dataset_dir")
+    s.add_argument("--val-frac", type=float, default=0.1)
+    s.add_argument("--test-frac", type=float, default=0.1)
+    s.add_argument("--seed", type=int, default=42)
+    s.set_defaults(fn=cmd_dataset_split)
+
+    s = sub.add_parser("dataset-stats")
+    s.add_argument("dataset_dir")
+    s.set_defaults(fn=cmd_dataset_stats)
+
+    s = sub.add_parser("train-bc")
+    s.add_argument("experiment_id")
+    s.add_argument("--dataset", required=True,
+                   help="transitions_v1 dataset directory")
+    s.add_argument("--epochs", type=int, default=20)
+    s.add_argument("--val-frac", type=float, default=0.2)
+    s.add_argument("--seed", type=int, default=42)
+    s.add_argument("--wait", type=float, default=0)
+    s.set_defaults(fn=cmd_train_bc)
+
+    s = sub.add_parser("worker-register")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, required=True)
+    s.add_argument("--token", required=True)
+    s.set_defaults(fn=cmd_worker_register)
+
+    s = sub.add_parser("worker-list")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, required=True)
+    s.add_argument("--token", required=True)
+    s.set_defaults(fn=cmd_worker_list)
 
     return p
 

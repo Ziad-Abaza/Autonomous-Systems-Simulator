@@ -1,0 +1,23 @@
+{
+  "name": "phase6_ppo_learning_benchmark",
+  "template": "lane_following",
+  "trainer": "ppo",
+  "env_mode": "inprocess",
+  "random_seed": 42,
+  "eval_seeds": [101, 202, 303],
+  "num_eval_episodes": 3,
+  "phases": [
+    {"timesteps": 2000, "rollout_length": 512},
+    {"timesteps": 4000, "rollout_length": 512}
+  ],
+  "training_overrides": {
+    "num_envs": 2,
+    "eval_frequency": 0,
+    "checkpoint_frequency": 0
+  },
+  "thresholds": {
+    "min_reward_delta": 5.0,
+    "stability_tolerance": 10.0
+  },
+  "phase_timeout_s": 1200
+}
