@@ -85,3 +85,7 @@ recordings/
 tracks/
 data/
 studio_settings.json
+
+# Internal docs & dev evidence
+docs/
+
