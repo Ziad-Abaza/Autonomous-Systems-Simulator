@@ -36,6 +36,7 @@ TRAINER_MODULES = {
     "ppo": "sim_experiment.trainers.ppo_trainer",
     "sac": "sim_experiment.trainers.sac_trainer",
     "dqn": "sim_experiment.trainers.dqn_trainer",
+    "bc": "sim_experiment.trainers.bc_trainer",
     "dummy": "sim_experiment.trainers.dummy_trainer",
 }
 
@@ -168,6 +169,10 @@ class LocalTrainingOrchestrator:
                 **contract["training"].get("algorithm_config", {}),
                 **run_overrides["algorithm_config"],
             }
+        if run_overrides.get("bc_dataset_dir"):
+            # BC runs consume a transitions_v1 dataset rather than live envs.
+            contract.setdefault("bc", {})["dataset_dir"] = os.path.abspath(
+                run_overrides["bc_dataset_dir"])
         errors = validate_contract(contract)
         if errors:
             self._cleanup_sim_pool(rd)

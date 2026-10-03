@@ -49,6 +49,15 @@ TRAINER_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "checkpoint_format": "torch",
         "evaluation": True,
     },
+    "bc": {
+        "algorithms": ["bc"],
+        "action_types": ["continuous", "discrete"],
+        "observation_types": ["vector"],
+        "multi_env": True,
+        "recurrent": False,
+        "checkpoint_format": "torch",
+        "evaluation": True,
+    },
     "dummy": {
         "algorithms": ["dummy"],
         "action_types": ["continuous", "discrete"],
