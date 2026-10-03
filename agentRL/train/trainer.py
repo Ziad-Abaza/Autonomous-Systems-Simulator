@@ -78,7 +78,7 @@ class OffPolicyTrainer:
 
     def train(self) -> dict[str, Any]:
         t0 = time.time()
-        agent, cfg, env = self.agent, self.cfg, self.env
+        agent, cfg = self.agent, self.cfg
         enc = self.agent.encoder
         obs = self._new_episode()
         encoded = enc.encode(obs, None)
@@ -87,7 +87,10 @@ class OffPolicyTrainer:
 
         for step in range(cfg.total_steps):
             a_env, aux = agent.act(encoded)
-            nobs, reward, terminated, truncated, info = env.step(a_env)
+            # NOTE: step self.env each iteration — MixedTrackTrainer swaps
+            # self.env on track changes; a captured local goes stale and
+            # steps an already-done env forever.
+            nobs, reward, terminated, truncated, info = self.env.step(a_env)
             if info.get("error"):
                 # step-after-done class error — should be structurally
                 # impossible; count it and force a fresh episode.

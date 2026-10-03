@@ -1,0 +1,30 @@
+{
+  "id": "E010",
+  "kind": "single",
+  "name": "Resume integrity check",
+  "algo": "sac",
+  "track": "oval",
+  "steps": 30000,
+  "obs_preset": "full23",
+  "seed": 42,
+  "initial_speed": 8.0,
+  "demos": {
+    "steps": 10000
+  },
+  "resume": {
+    "halves": 2
+  },
+  "agent_overrides": {
+    "warmup": 500,
+    "batch": 256
+  },
+  "results": {
+    "sac": {
+      "timesteps": 15000,
+      "episodes": 14,
+      "run_dir": "D:\\coding\\projects\\Simulation\\agentRL\\experiments\\runs\\E010\\sac",
+      "wall_s": 343.99,
+      "resumed_from": "D:\\coding\\projects\\Simulation\\agentRL\\experiments\\runs\\E010\\sac\\checkpoints\\resume_mid.pt"
+    }
+  }
+}

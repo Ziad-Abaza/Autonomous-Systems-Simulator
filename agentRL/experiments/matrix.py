@@ -117,7 +117,7 @@ def run_experiment(exp_id: str, run_dir: str | None = None,
     results: dict[str, Any] = {}
     base_dir = Path(run_dir or RUNS_ROOT / exp_id)
 
-    for algo in algos or cfg.get("algos", [cfg["algo"]]):
+    for algo in algos or cfg.get("algos", [cfg.get("algo", "sac")]):
         adir = base_dir / algo
         agent = _build_agent(algo, cfg, seeds["torch"])
         tc = TrainConfig(

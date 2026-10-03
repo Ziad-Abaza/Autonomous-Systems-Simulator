@@ -47,6 +47,14 @@ class TrackRegistry:
                 continue  # track file removed from the repo — skip
             reg.register_file(tid, path,
                               tags=("train",) if tid != "smoke" else ("smoke",))
+        if "smoke" not in reg._file:
+            # authored smoke track was removed upstream; the generated
+            # open straight keeps the "smoke" tag usable for tests
+            reg.register_generated(
+                "smoke",
+                lambda: track_gen.project_for_road(
+                    track_gen.gen_straight(), project_name="smoke"),
+                tags=("smoke",))
         # Generated closed loops — distinct geometries for continual
         # phases and guaranteed-unseen holdouts.
         for i in range(6):

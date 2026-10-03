@@ -88,14 +88,14 @@ more training steps than the 60k budget.
 | E001b | single | initial_speed alone | negative — 0/271 episodes reach a checkpoint |
 | E001c | single | + PD demos | **evidence gate passed** |
 | E002 | single | recipe on serpentine | TBD |
-| E003 | single | obstacle-mutated oval | TBD |
-| E004 | mixed | simultaneous 4-track | TBD |
-| E005 | continual | oval→serpentine→gen_loop_0 + retention | TBD |
-| E006 | eval | unseen gen_loop_4/5 generalization | TBD |
-| E007 | eval | obstacle generalization | TBD |
-| E008 | eval | friction/noise robustness | TBD |
-| E009 | single | state8 obs ablation | TBD |
-| E010 | single | cold-resume integrity | TBD |
+| E003 | single | obstacle-mutated oval | **learned** — last-30 train ret 248; deterministic eval **853.3 ret, 0.688 lap, 11.6 m/s** |
+| E004 | mixed | simultaneous 4-track | **first run invalidated** — trainer stepped a stale env after track switch (79,593 step-after-done events); bug fixed + regression test added, 80k rerun in progress |
+| E005 | continual | oval→serpentine→gen_loop_0 + retention | **retention positive** (see below) |
+| E006 | eval | unseen gen_loop_4/5 generalization | **gen_loop_4: ret 1144, 0.875 lap, 12 m/s, 0 collisions**; gen_loop_5 partial (ret 274, 0.25) |
+| E007 | eval | obstacle generalization | oval ret 416.6 / 0.3 prog under 2-5 unseen obstacles; serpentine ret 153.6 |
+| E008 | eval | friction/noise robustness | oval ret 408.6 ≈ clean-track level (robust); serpentine degrades |
+| E009 | single | state8 obs ablation | **insufficient** — plateaus ~1 ckpt; det. eval 19 ret / 0.0 prog vs full23's 853 / 0.688 |
+| E010 | single | cold-resume integrity | **passed** — two 15k halves, cold restart from `resume_mid.pt`, train_state steps=30000, 29745 updates, 0 NaN guards; +655 ep return in leg 2 |
 
 ## 4. Measured results
 
@@ -118,12 +118,72 @@ more training steps than the 60k budget.
 | 37–44k | repeated +500…+900 episodes at ~9.6 m/s |
 | 60k | deterministic policy: cautious zero-collision driver |
 
+### E005 — continual learning (SAC, rehearsal_fraction 0.25)
+
+Phases: oval (50k) → serpentine (50k) → gen_loop_0 (50k); PD demos
+seeded per phase (15k/10k/10k). Eval matrix re-measures every seen
+track + holdouts after each phase (deterministic, 3 seeds,
+initial_speed=8 matching training spawn).
+
+| Track | phase_0 | phase_1 | phase_2 (final) |
+|---|---|---|---|
+| oval | 164.3 ret / 0.125 prog | 112.4 / 0.125 | **477.5 / ?** |
+| serpentine | 637.6 (pre-train transfer) | 196.1 / 0.1 | 170.9 |
+| gen_loop_0 | 140.4 | 65.2 | −711.0 (mu mid-training) |
+| gen_loop_4 (holdout) | 58.1 | 1129.3 | 327.1 |
+| gen_loop_5 (holdout) | 77.7 | 132.5 | 478.7 |
+
+Key readings (from `continual_report.json`):
+- **oval improved across phases** (164 → 478 final retention) —
+  rehearsal produced net positive backward transfer, not forgetting.
+- Derived forgetting: serpentine −25, all others 0.
+- phase_2's own-track eval is negative — deterministic mu lag again;
+  evals are noisy at 3 seeds.
+
+### E006–E008 — held-out eval of the continual policy
+
+| Experiment | Track | Result |
+|---|---|---|
+| E006 unseen | gen_loop_4 | **1144.1 ret, 0.875 prog, 12.1 m/s, 0 collisions** |
+| E006 unseen | gen_loop_5 | 274.1 ret, 0.25 prog, all episodes collide |
+| E007 obstacles | oval | 416.6 ret, 0.3 prog (2–5 unseen obstacles) |
+| E007 obstacles | serpentine | 153.6 ret, 0.1 prog |
+| E008 friction+noise | oval | 408.6 ret — matches clean 416.6 → robust |
+| E008 friction+noise | serpentine | 139.6 ret — degrades under perturbation |
+
+Eval-spawn caveat: identical evals without `initial_speed` produced
+stall_timeout everywhere — the deterministic policy cannot reliably
+pull away from rest mid-training. All reported evals use the training
+spawn (8 m/s), noted explicitly.
+
 ## 5. Reproduce
 
 ```powershell
 python -m agentRL.experiments.matrix --exp E001c --algos sac
 python tests/agent/evaluate_policy.py --ckpt <run>/checkpoints/latest.pt --track oval --out eval.json
 ```
+
+### E004 — stale env reference bug (found by experiment failure)
+
+The first E004 run logged 79,593 consecutive `failure` rows:
+`step() was called after episode ended`. Root cause — `train()` bound
+`env = self.env` once, while `MixedTrackTrainer._new_episode()` rotates
+`self.env` per episode; after the first done the loop kept stepping a
+dead env. Fix: step `self.env` inside the loop. The failure-logging
+path that was added "just in case" is exactly what surfaced it —
+79.5k logged errors beat a silent hang.
+
+### E009 — observation ablation (state8 vs full23)
+
+| | state8 (E009) | full23 (E001c) |
+|---|---|---|
+| best train ckpts | 1 | 11 |
+| deterministic eval ret | 19.0 | 170.3–853.3 |
+| eval progress | 0.0 | 0.125–0.688 |
+
+The 8-channel subset moves fast (9.9 m/s) but never holds the racing
+line — the extra channels (checkpoint distance, waypoint preview,
+steering state) carry the information cornering needs.
 
 ## 6. Known limitations
 

@@ -50,22 +50,22 @@
         },
         "serpentine": {
           "n_episodes": 5,
-          "mean_return": 153.64823017827828,
-          "std_return": 3.165845425093647,
-          "mean_length": 281.2,
+          "mean_return": 166.81078037063872,
+          "std_return": 3.913462349164727,
+          "mean_length": 1500.0,
           "completion_rate": 0.0,
-          "collision_rate": 1.0,
+          "collision_rate": 0.0,
           "off_road_rate": 0.0,
           "wrong_direction_rate": 0.0,
-          "timeout_rate": 0.0,
+          "timeout_rate": 1.0,
           "mean_progress": 0.1,
-          "mean_speed": 10.731916229750109,
-          "mean_lateral": 1.8242102476401765,
-          "max_lateral": 5.139827447712625,
-          "mean_heading_err": 0.10612001208854385,
-          "steer_smoothness": 0.7162834125806778,
+          "mean_speed": 2.231490279396689,
+          "mean_lateral": 0.7612673481390938,
+          "max_lateral": 5.268052568437146,
+          "mean_heading_err": 0.7618498227724958,
+          "steer_smoothness": 0.9490666666666667,
           "failure_classes": {
-            "collision": 5
+            "timeout_progress": 5
           }
         }
       }

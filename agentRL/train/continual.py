@@ -34,6 +34,7 @@ class Phase:
     steps: int
     mutator: ScenarioMutator | None = None
     tag: str = ""
+    demos: int = 0  # PD warmstart steps seeded into this track's buffer
     train_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -116,6 +117,12 @@ class ContinualTrainer:
                 extra=self.cfg.extra)
             trainer = make_trainer(self.factory, track, self.agent,
                                    sub_cfg, mutator=phase.mutator)
+            if phase.demos > 0 and \
+                    getattr(self.agent, "memory", None) is not None:
+                from agentRL.baselines.pd_driver import collect_demos
+                collect_demos(trainer.env, self.agent.adapter,
+                              self.agent.memory, self.agent.encoder,
+                              n_steps=phase.demos, mutator=phase.mutator)
             trainer.train()
             ckpt_path = os.path.join(
                 self.cfg.run_dir, "checkpoints",

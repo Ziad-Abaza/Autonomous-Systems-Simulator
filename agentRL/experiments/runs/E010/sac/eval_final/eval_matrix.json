@@ -1,0 +1,24 @@
+{
+  "sac": {
+    "oval": {
+      "n_episodes": 3,
+      "mean_return": 310.638096986323,
+      "std_return": 0.0,
+      "mean_length": 493.0,
+      "completion_rate": 0.0,
+      "collision_rate": 1.0,
+      "off_road_rate": 0.0,
+      "wrong_direction_rate": 0.0,
+      "timeout_rate": 0.0,
+      "mean_progress": 0.25,
+      "mean_speed": 11.850072476462705,
+      "mean_lateral": 1.0154745394378222,
+      "max_lateral": 4.217113837463687,
+      "mean_heading_err": 0.15772717698148636,
+      "steer_smoothness": 0.9046653144016227,
+      "failure_classes": {
+        "collision": 3
+      }
+    }
+  }
+}

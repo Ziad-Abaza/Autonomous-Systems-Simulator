@@ -79,6 +79,21 @@ def gen_loop(seed: int, n_cps: int = 10, base_r: float = 55.0,
     }
 
 
+def gen_straight(length: float = 100.0, width: float = 12.0,
+                 name: str = "gen_straight") -> dict[str, Any]:
+    """Short open straight segment — trivial drivable track for smoke
+    tests (replaces the removed tracks/smoke_test.sim.json)."""
+    cps = [_cp(0.0, 0.0, width), _cp(length, 0.0, width)]
+    base = load_base_project()["road_definition"]
+    return {
+        "name": name, "is_closed": False, "control_points": cps,
+        "boundary_config": copy.deepcopy(base["boundary_config"]),
+        "spawn_point": {"x": 0.0, "y": 0.0, "z": 0.1, "yaw": 0.0,
+                        "initial_speed": 0.0},
+        "num_checkpoints": 4, "default_friction": 1.0,
+    }
+
+
 def project_for_road(road_def: dict[str, Any],
                      project_name: str | None = None) -> dict[str, Any]:
     """Wrap a generated road_definition in a full project dict."""

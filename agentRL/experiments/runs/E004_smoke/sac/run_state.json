@@ -1,0 +1,13 @@
+{
+  "timestep": 2000,
+  "episodes": 8,
+  "wall_s": 99.66,
+  "track": "oval",
+  "algo": "sac",
+  "train_state": {
+    "steps": 2000,
+    "updates": 2000,
+    "nan_guards": 0,
+    "episodes": 0
+  }
+}
