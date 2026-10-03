@@ -6,7 +6,8 @@ __pycache__/
 *.pyd
 
 # PyInstaller / Distribution / Build outputs
-build/
+build/*
+!build/*.py
 build_temp/
 dist/
 downloads/
