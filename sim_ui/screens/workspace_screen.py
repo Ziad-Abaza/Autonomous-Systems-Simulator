@@ -328,6 +328,13 @@ class WorkspaceScreen:
             app.renderer.camera.mode = payload
         elif action == "ws_record_start":
             app.active_dialog = "record"
+        elif action == "rec_browse":
+            # choose destination dir for the pending recording
+            path = app._tk("askdirectory", initialdir=app.record_dir,
+                           title="Recording destination")
+            if path:
+                app.record_dir = path
+                app.ui_ctx.inputs["rec_dir"]["text"] = path
         elif action == "ws_record_stop":
             app.stop_recording()
         elif action == "rp_browse":
@@ -364,16 +371,33 @@ class WorkspaceScreen:
             app.dialog_payload = {"path": payload,
                                   "name": os.path.basename(payload)}
         elif action == "ds_open_source":
-            # jump to the experiment that produced the dataset
-            app.ui_ctx.status("Source navigation not implemented", "warn")
+            # dataset inside an experiment run dir → select its experiment
+            p = os.path.normpath(payload).split(os.sep)
+            root = os.path.normpath(app.exp_mgr.root_dir).split(os.sep)
+            if p[:len(root)] == root and len(p) > len(root):
+                app.train_state["selected_experiment"] = p[len(root)]
+                app.ws_tab = "EDIT"
+                app.inspector.active_tab = "TRAIN"
+            else:
+                app._status("Source experiment not found", "warn")
         elif action == "exp_select":
             app.train_state["selected_experiment"] = payload
         elif action == "exp_launch":
+            if payload:
+                app.train_state["selected_experiment"] = payload
             app._train_action("trn_launch")
         elif action == "exp_open_env":
             app.open_experiment_env(payload)
         elif action == "exp_export":
-            app.ui_ctx.status("Experiment export via TRAIN tab", "info")
+            if payload:
+                try:
+                    dest = os.path.join(app.exp_mgr.root_dir, "exported",
+                                        payload)
+                    app.exp_mgr.export(payload, dest)
+                    app._status(f"Exported → {dest}", "ok")
+                    app.reveal_in_folder(dest)
+                except Exception as e:
+                    app._status(f"Export failed: {e}", "error")
         else:
             return False
         return True

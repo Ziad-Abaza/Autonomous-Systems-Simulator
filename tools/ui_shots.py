@@ -43,7 +43,7 @@ for _ in range(30):
     pygame.display.flip()
 
 # ---- HOME ----
-app.screen = "home"
+app.studio_screen = "home"
 app.home_screen.section = "TRACKS"
 shot("h1_home_tracks")
 app.home_screen.section = "TEMPLATES"
@@ -123,7 +123,7 @@ shot("d1_data_datasets")
 # ---- light theme home ----
 import sim_ui.theme as T
 T.set_theme("light")
-app.screen = "home"
+app.studio_screen = "home"
 app.home_screen.section = "TRACKS"
 shot("l1_home_light")
 T.set_theme("dark")

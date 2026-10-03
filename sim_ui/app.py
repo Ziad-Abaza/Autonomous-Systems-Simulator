@@ -76,7 +76,7 @@ class SimulationStudioApp:
         self.record_dir = self.settings.recordings_dir()
 
         # Screen navigation (Phase 7 studio shell)
-        self.screen = "home"          # "home" | "workspace"
+        self.studio_screen = "home"          # "home" | "workspace"
         self.ws_tab = "SIMULATE"      # "EDIT" | "SIMULATE" | "REPLAY" | "DATA"
         self.active_dialog: Optional[str] = None
         self.dialog_payload: Any = None
@@ -551,7 +551,7 @@ class SimulationStudioApp:
 
     def _status(self, text: str, tone: str = "info") -> None:
         if hasattr(self, "ui_ctx"):
-            self._status(text, tone)
+            self.ui_ctx.status(text, tone)
         else:
             print(f"[Studio] {text}")
 
@@ -644,7 +644,7 @@ class SimulationStudioApp:
             self.library.mark_opened(path)
             self.settings.push_recent(path)
             self.settings.save()
-        self.screen = "workspace"
+        self.studio_screen = "workspace"
         self.ws_tab = "EDIT"
         self.active_dialog = None
         if not self.headless:
@@ -682,7 +682,7 @@ class SimulationStudioApp:
                 "text": "Untitled Track", "caret": 13}
 
     def go_home(self) -> None:
-        self.screen = "home"
+        self.studio_screen = "home"
         self.active_dialog = None
         self.home_screen.invalidate_thumbs()
 
@@ -943,13 +943,14 @@ class SimulationStudioApp:
         if action.startswith(("prop_", "tab_", "action_")):
             self._route_inspector_action(action)
             return
-        handled = False
-        if self.screen == "home":
-            handled = True
-            self.home_screen.on_action(action, payload)
+        if self.studio_screen == "home":
+            # home handles its own actions; workspace handles shared ones
+            # (dataset/experiment actions also exist on the home screen)
+            if not self.home_screen.on_action(action, payload):
+                self.workspace.on_action(action, payload)
         else:
-            handled = self.workspace.on_action(action, payload)
-            if not handled and self.ws_tab == "EDIT":
+            if (not self.workspace.on_action(action, payload)
+                    and self.ws_tab == "EDIT"):
                 self.workspace.editor_ui.on_action(action, payload)
 
     def _route_inspector_action(self, action_id: str) -> None:
@@ -1079,7 +1080,7 @@ class SimulationStudioApp:
                 self._handle_events()
 
                 # If no external AI is controlling this tick, check manual keyboard inputs
-                if (not external_stepped and self.screen == "workspace"
+                if (not external_stepped and self.studio_screen == "workspace"
                         and self.ws_tab == "SIMULATE"):
                     self._handle_keyboard_drive()
                     act = [self.manual_steer, self.manual_throttle, self.manual_brake]
@@ -1147,7 +1148,7 @@ class SimulationStudioApp:
 
             elif event.type == pygame.MOUSEMOTION:
                 ctx.mouse_pos = event.pos
-                if (self.screen == "workspace" and self.ws_tab == "EDIT"):
+                if (self.studio_screen == "workspace" and self.ws_tab == "EDIT"):
                     self.workspace.editor_ui.canvas_mouse_move(event.pos)
                 continue
 
@@ -1176,16 +1177,16 @@ class SimulationStudioApp:
                     continue
                 # 3. screen shortcuts
                 ctrl = bool(event.mod & pygame.KMOD_CTRL)
-                if ctrl and event.key == pygame.K_s and self.screen == "workspace":
+                if ctrl and event.key == pygame.K_s and self.studio_screen == "workspace":
                     self.save_project()
                     continue
-                if ctrl and event.key == pygame.K_o and self.screen == "workspace":
+                if ctrl and event.key == pygame.K_o and self.studio_screen == "workspace":
                     self.open_file_dialog()
                     continue
-                if self.screen == "workspace" and self.ws_tab == "EDIT":
+                if self.studio_screen == "workspace" and self.ws_tab == "EDIT":
                     if self.workspace.editor_ui.handle_key(event):
                         continue
-                elif self.screen == "workspace" and self.ws_tab == "SIMULATE":
+                elif self.studio_screen == "workspace" and self.ws_tab == "SIMULATE":
                     if event.key == pygame.K_r:
                         self.obs, self.step_info = self.env.reset()
                     elif event.key == pygame.K_c:
@@ -1197,7 +1198,7 @@ class SimulationStudioApp:
                         self.hud.show_obs_inspector = \
                             not self.hud.show_obs_inspector
                     continue
-                elif self.screen == "workspace" and self.ws_tab == "REPLAY":
+                elif self.studio_screen == "workspace" and self.ws_tab == "REPLAY":
                     if event.key == pygame.K_SPACE:
                         self.replay_player.toggle_play()
                     elif event.key == pygame.K_LEFT:
@@ -1209,7 +1210,7 @@ class SimulationStudioApp:
                     continue
                 # 4. escape hierarchy: dialog > tool > selection > home > quit
                 if event.key == pygame.K_ESCAPE:
-                    if self.screen == "workspace":
+                    if self.studio_screen == "workspace":
                         self.go_home()
                     else:
                         self.request_quit()
@@ -1221,7 +1222,7 @@ class SimulationStudioApp:
                     kind = r.get("kind")
                     if r.get("action"):
                         self._dispatch_action(r["action"], r.get("payload"))
-                    elif (kind == "canvas" and self.screen == "workspace"
+                    elif (kind == "canvas" and self.studio_screen == "workspace"
                           and self.ws_tab == "EDIT"):
                         ed = self.track_editor
                         ed.handle_mouse_down(event.pos, event.button)
@@ -1234,14 +1235,14 @@ class SimulationStudioApp:
                 continue
 
             elif event.type == pygame.MOUSEBUTTONUP:
-                if self.screen == "workspace" and self.ws_tab == "EDIT":
+                if self.studio_screen == "workspace" and self.ws_tab == "EDIT":
                     self.workspace.editor_ui.canvas_mouse_up()
                 continue
 
             elif event.type == pygame.MOUSEWHEEL:
                 if ctx.mouse_wheel(ctx.mouse_pos, event.y):
                     continue
-                if (self.screen == "workspace" and self.ws_tab == "EDIT"):
+                if (self.studio_screen == "workspace" and self.ws_tab == "EDIT"):
                     # inspector scroll if cursor over panel, else canvas zoom
                     pa = self.inspector.props_area
                     if pa and pa.collidepoint(ctx.mouse_pos):
@@ -1259,7 +1260,7 @@ class SimulationStudioApp:
         # 1. 3D scene — only in the tabs that show a 3D viewport.
         #    The EDIT tab uses a dedicated 2D canvas; drawing 3D behind it
         #    was the source of the old double-visualization problem.
-        show_3d = (self.screen == "workspace"
+        show_3d = (self.studio_screen == "workspace"
                    and self.ws_tab in ("SIMULATE", "REPLAY"))
         if show_3d:
             all_scene_obs = self.env.obstacles + [
@@ -1287,7 +1288,7 @@ class SimulationStudioApp:
         self.ui_renderer.clear()
         self.ui_ctx.surface = self.ui_renderer.ui_surface
         self.ui_ctx.begin_frame()
-        if self.screen == "home":
+        if self.studio_screen == "home":
             self.home_screen.draw(self.ui_ctx)
         else:
             self.workspace.draw(self.ui_ctx)

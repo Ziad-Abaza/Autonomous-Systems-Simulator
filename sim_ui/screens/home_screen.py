@@ -219,7 +219,7 @@ class HomeScreen:
         button(ctx, pygame.Rect(r.right - 86, r.bottom - 34, 56, 26),
                "Open", "open_track", a.path, style="primary")
         icon_button(ctx, pygame.Rect(r.right - 26, r.bottom - 34, 22, 26),
-                    "⋯", "card_menu", a.path, tooltip="Track actions")
+                    "...", "card_menu", a.path, tooltip="Track actions")
         menu_draw(ctx, f"card:{a.path}",
                   pygame.Rect(r.right - 26, r.bottom - 34, 22, 26),
                   [("Open", "m_open", a.path),
@@ -331,7 +331,7 @@ class HomeScreen:
 
     # -------------------------------------------------------------- actions
 
-    def on_action(self, action: str, payload: Any) -> None:
+    def on_action(self, action: str, payload: Any) -> bool:
         app = self.app
         if action == "nav":
             self.section = str(payload).upper()
@@ -379,3 +379,6 @@ class HomeScreen:
             app.settings.ui_scale = payload
             app.settings.save()
             app.rebuild_fonts()
+        else:
+            return False
+        return True
