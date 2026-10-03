@@ -68,14 +68,25 @@ NON_RETRYABLE_ERROR_TYPES = frozenset({
 })
 
 
-def is_retryable_error(error: Optional[Dict[str, Any]]) -> bool:
-    """Classifies a run error dict as retryable (transient) or not."""
+def is_retryable_error(
+    error: Optional[Dict[str, Any]],
+    retryable_types: Optional[frozenset] = None,
+) -> bool:
+    """Classifies a run error dict as retryable (transient) or not.
+
+    `retryable_types` lets a RetryPolicy extend the retryable set; the
+    NON_RETRYABLE set always wins (a policy cannot make config errors
+    retryable).
+    """
     if not error:
         return False
     etype = error.get("type", "")
     if etype in NON_RETRYABLE_ERROR_TYPES:
         return False
-    if etype in RETRYABLE_ERROR_TYPES:
+    allowed = set(RETRYABLE_ERROR_TYPES)
+    if retryable_types:
+        allowed |= set(retryable_types)
+    if etype in allowed:
         return True
     return False  # unknown types are not retried (conservative)
 
@@ -129,6 +140,12 @@ class Worker:
     current_job_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     adapter: Any = None
+    # Lease/heartbeat bookkeeping (remote workers). A worker whose adapter
+    # exposes heartbeat() is probed every heartbeat_interval_s; missing the
+    # lease_ttl_s window marks it OFFLINE and reclaims its jobs.
+    last_heartbeat: float = 0.0
+    missed_heartbeats: int = 0
+    remote_worker_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -138,6 +155,8 @@ class Worker:
             "current_run_id": self.current_run_id,
             "current_job_id": self.current_job_id,
             "metadata": self.metadata,
+            "last_heartbeat": self.last_heartbeat,
+            "missed_heartbeats": self.missed_heartbeats,
         }
 
 
@@ -150,7 +169,11 @@ class BatchScheduler:
         max_workers: int = 2,
         orchestrator: Optional[LocalTrainingOrchestrator] = None,
         workers: Optional[List[Worker]] = None,
+        heartbeat_interval_s: float = 10.0,
+        lease_ttl_s: float = 30.0,
     ):
+        self.heartbeat_interval_s = float(heartbeat_interval_s)
+        self.lease_ttl_s = float(lease_ttl_s)
         self.experiments_root = os.path.abspath(experiments_root)
         self.orch = orchestrator or LocalTrainingOrchestrator(
             experiments_root=self.experiments_root)
@@ -259,12 +282,70 @@ class BatchScheduler:
 
     def tick(self, batch_id: Optional[str] = None) -> None:
         """One scheduling round: dispatch queued jobs, poll running ones."""
+        self._check_heartbeats()
         for rec in self._batches.values():
             if batch_id and rec["batch_id"] != batch_id:
                 continue
             self._dispatch(rec)
             self._poll_jobs(rec)
             self._persist(rec)
+
+    # ------------------------------------------------------------ leases
+
+    def _check_heartbeats(self) -> None:
+        """
+        Probes remote workers (adapters exposing heartbeat()). Missed
+        heartbeats past lease_ttl_s mark the worker OFFLINE and reclaim its
+        in-flight jobs for retry on healthy workers.
+        """
+        now = time.time()
+        for w in self.workers:
+            hb = getattr(w.adapter, "heartbeat", None)
+            if hb is None or w.status == WorkerState.OFFLINE:
+                continue
+            if w.last_heartbeat and now - w.last_heartbeat < self.heartbeat_interval_s:
+                continue
+            try:
+                resp = hb()
+                if resp.get("worker_id"):
+                    w.remote_worker_id = resp["worker_id"]
+                w.last_heartbeat = now
+                w.missed_heartbeats = 0
+                continue
+            except Exception:
+                w.missed_heartbeats += 1
+            last = w.last_heartbeat or 0.0
+            if now - last > self.lease_ttl_s:
+                self._mark_offline(w, reason="heartbeat_lease_expired")
+
+    def _mark_offline(self, w: Worker, reason: str) -> None:
+        """Marks a worker OFFLINE and requeues/rejects its in-flight jobs."""
+        w.status = WorkerState.OFFLINE
+        w.metadata["offline_reason"] = reason
+        job_id = w.current_job_id
+        w.current_run_id = None
+        w.current_job_id = None
+        for rec in self._batches.values():
+            policy = rec["retry_policy"]
+            for job in rec["data"]["jobs"]:
+                if job["status"] != JobStatus.RUNNING:
+                    continue
+                attempt = job["attempts"][-1] if job["attempts"] else None
+                if attempt is None or attempt.get("worker_id") != w.worker_id:
+                    continue
+                if job_id is not None and job["job_id"] != job_id:
+                    continue
+                attempt["status"] = "FAILED"
+                attempt["ended_at"] = round(time.time(), 4)
+                attempt["error"] = {
+                    "type": "worker_crash",
+                    "message": f"Worker {w.worker_id} unreachable ({reason})",
+                }
+                # A lost worker is infrastructure failure, not a job attempt
+                # failure — the job re-queues without consuming its retry
+                # budget so a healthy worker can pick it up.
+                job["status"] = JobStatus.QUEUED
+                self._persist(rec)
 
     def run_until_complete(
         self, batch_id: str, timeout_s: float = 600.0, poll_s: float = 0.5
@@ -379,7 +460,17 @@ class BatchScheduler:
             attempt = job["attempts"][-1]
             worker = self._worker_by_id(attempt.get("worker_id"))
             adapter = worker.adapter if worker is not None else self._local_adapter
-            summary = adapter.poll(rec["experiment_dir"], attempt["run_id"])
+            try:
+                summary = adapter.poll(rec["experiment_dir"], attempt["run_id"])
+            except Exception as e:
+                # Poll failure = unreachable worker. Count it toward the
+                # heartbeat lease; on expiry the worker goes OFFLINE and the
+                # job is reclaimed via _mark_offline.
+                if worker is not None:
+                    worker.missed_heartbeats += 1
+                    if time.time() - (worker.last_heartbeat or 0.0) > self.lease_ttl_s:
+                        self._mark_offline(worker, reason="poll_unreachable")
+                continue
             if summary["status"] not in RunStatus.TERMINAL:
                 continue
             attempt["status"] = summary["status"]
@@ -388,7 +479,9 @@ class BatchScheduler:
             self._release_worker(job["job_id"])
 
             failed = summary["status"] in (RunStatus.FAILED, RunStatus.INTERRUPTED)
-            retryable = failed and is_retryable_error(summary.get("error"))
+            retryable = failed and is_retryable_error(
+                summary.get("error"),
+                retryable_types=policy.retryable_error_types)
             if retryable and len(job["attempts"]) <= policy.max_retries:
                 job["status"] = JobStatus.QUEUED   # re-queue a fresh attempt
             else:

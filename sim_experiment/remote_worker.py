@@ -18,11 +18,13 @@ rejected before dispatch; protocol version mismatches fail cleanly.
 from __future__ import annotations
 import hmac
 import json
+import os
 import select
 import socket
 import socketserver
 import threading
 import time
+import uuid
 from typing import Any, Dict, Optional
 
 from sim_experiment.manifest import ExperimentManifest
@@ -40,6 +42,7 @@ class WorkerService:
             raise ValueError("WorkerService requires a non-empty shared token")
         self.host = host
         self._token = token
+        self.worker_id = f"worker_{uuid.uuid4().hex[:12]}"
         self.orch = LocalTrainingOrchestrator(experiments_root=experiments_root)
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
@@ -78,6 +81,8 @@ class WorkerService:
             "trainers": sorted(self.orch.trainer_modules()),
             "max_envs_per_run": None,
             "worker_protocol_version": WORKER_PROTOCOL_VERSION,
+            "worker_id": self.worker_id,
+            "heartbeat": True,
         }
 
     def _handle(self, msg: Dict[str, Any]) -> Dict[str, Any]:
@@ -101,10 +106,34 @@ class WorkerService:
                         "supported": list(SUPPORTED_WORKER_VERSIONS),
                         "capabilities": self._capabilities()}
 
+            if mtype == "REGISTER":
+                return {"type": "REGISTER_ACK",
+                        "worker_id": self.worker_id,
+                        "capabilities": self._capabilities()}
+
+            if mtype == "HEARTBEAT":
+                return {"type": "HEARTBEAT_ACK",
+                        "alive": True,
+                        "worker_id": self.worker_id}
+
             if mtype == "LAUNCH":
+                # Root containment: the experiment dir must live under this
+                # worker's experiments root — remote callers cannot point
+                # launches at arbitrary filesystem locations.
+                exp_dir = os.path.abspath(msg["experiment_dir"])
+                root = os.path.abspath(self.orch.experiments_root)
+                try:
+                    inside = os.path.commonpath([root, exp_dir]) == root
+                except ValueError:
+                    inside = False  # different drive / malformed path
+                if not inside:
+                    return {"type": "ERROR", "error": {
+                        "type": "invalid_experiment_dir",
+                        "message": f"experiment_dir escapes worker root: "
+                                   f"{msg['experiment_dir']!r}"}}
                 manifest = ExperimentManifest.from_dict(msg["manifest"])
                 run_id = self.orch.launch(
-                    manifest, msg["experiment_dir"],
+                    manifest, exp_dir,
                     trainer=msg.get("trainer", "ppo"),
                     env_mode=msg.get("env_mode", "inprocess"),
                     run_overrides=msg.get("run_overrides"))
@@ -179,6 +208,7 @@ class RemoteWorkerAdapter:
         self._token = token
         self.timeout = timeout
         self._caps: Optional[Dict[str, Any]] = None
+        self.worker_id: Optional[str] = None
 
     def _rpc(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = {"v": WORKER_PROTOCOL_VERSION, "token": self._token, **payload}
@@ -201,7 +231,25 @@ class RemoteWorkerAdapter:
         return resp
 
     def handshake(self) -> Dict[str, Any]:
-        return self._rpc({"type": "HELLO"})
+        resp = self._rpc({"type": "HELLO"})
+        caps = resp.get("capabilities") or {}
+        if caps.get("worker_id"):
+            self.worker_id = caps["worker_id"]
+        return resp
+
+    def register(self) -> Dict[str, Any]:
+        """Explicit worker registration — stable identity for lease tracking."""
+        resp = self._rpc({"type": "REGISTER"})
+        self.worker_id = resp.get("worker_id")
+        return resp
+
+    def heartbeat(self) -> Dict[str, Any]:
+        """Liveness check; raises if the worker is unreachable."""
+        resp = self._rpc({"type": "HEARTBEAT"})
+        if resp.get("worker_id"):
+            self.worker_id = resp["worker_id"]
+        return {"alive": bool(resp.get("alive")),
+                "worker_id": resp.get("worker_id")}
 
     def capabilities(self) -> Dict[str, Any]:
         if self._caps is None:
