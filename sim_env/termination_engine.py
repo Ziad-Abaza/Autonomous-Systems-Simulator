@@ -18,8 +18,8 @@ class TerminationConfig:
     laps_to_complete: int = 1
 
     # Truncation limits
-    max_episode_steps: int = 1500
-    max_seconds_without_checkpoint: float = 20.0
+    max_episode_steps: int = 5000
+    max_seconds_without_checkpoint: float = 30.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -86,11 +86,11 @@ class TerminationEngine:
             return True, False, "lap_completed"
 
         # 5. Checkpoint timeout truncation (stuck vehicle)
-        if self.time_since_last_checkpoint > cfg.max_seconds_without_checkpoint:
+        if cfg.max_seconds_without_checkpoint > 0 and self.time_since_last_checkpoint > cfg.max_seconds_without_checkpoint:
             return False, True, "checkpoint_timeout"
 
         # 6. Max steps truncation
-        if self.episode_steps >= cfg.max_episode_steps:
+        if cfg.max_episode_steps > 0 and self.episode_steps >= cfg.max_episode_steps:
             return False, True, "max_steps_exceeded"
 
         return False, False, "running"

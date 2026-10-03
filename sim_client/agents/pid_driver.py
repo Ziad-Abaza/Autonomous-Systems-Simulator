@@ -44,9 +44,9 @@ def run_pid_agent(host: str = "127.0.0.1", port: int = 8765, max_steps: int = 10
     print(f"[PID Driver] Connected! Track: {spec['track_name']}, Length: {spec['track_length']:.1f}m, Physics: {spec['physics_hz']}Hz")
 
     # Lateral steering PID controller
-    # Error is lateral offset + heading error lookahead
-    steer_pid = PIDController(kp=0.75, ki=0.01, kd=0.25, output_limits=(-1.0, 1.0))
-    speed_pid = PIDController(kp=0.15, ki=0.01, kd=0.05, output_limits=(0.0, 1.0))
+    # Error is lateral offset + heading error lookahead + LiDAR barrier centering
+    steer_pid = PIDController(kp=0.85, ki=0.005, kd=0.05, output_limits=(-1.0, 1.0))
+    speed_pid = PIDController(kp=0.25, ki=0.01, kd=0.05, output_limits=(0.0, 1.0))
 
     obs, info = client.reset()
     print(f"[PID Driver] Environment reset. Starting autonomous drive loop for {max_steps} steps...")
@@ -61,13 +61,30 @@ def run_pid_agent(host: str = "127.0.0.1", port: int = 8765, max_steps: int = 10
         lat_offset = info.get('lateral_offset', 0.0)
         speed = info.get('speed', 0.0)
 
-        # Lookahead composite steering error
-        steer_error = (lat_offset * 0.25) + (heading_err * 1.2)
+        # Extract LiDAR ranges for obstacle and corner preview (15 rays spanning 180 degrees)
+        if isinstance(obs, np.ndarray) and len(obs) >= 22:
+            lidar_rays = obs[7:22] * 40.0  # de-normalize from [0, 1] to meters
+            left_dist = float(np.mean(lidar_rays[10:]))
+            right_dist = float(np.mean(lidar_rays[:5]))
+            center_dist = float(np.min(lidar_rays[5:10]))
+        else:
+            left_dist = 6.0
+            right_dist = 6.0
+            center_dist = 40.0
+
+        # LiDAR centering assist (detects proximity to track walls)
+        lidar_bias = (right_dist - left_dist) / 12.0
+
+        # Composite lookahead steering error
+        steer_error = (lat_offset * 0.35) + (heading_err * 0.75) + (lidar_bias * 0.2)
         steer_cmd = steer_pid.update(steer_error, dt)
 
-        # Target speed modulates on sharp corners
-        curvature_factor = max(0.0, 1.0 - abs(heading_err) * 1.5)
-        target_speed = 12.0 + 10.0 * curvature_factor
+        # Dynamic target speed modulates on upcoming corners and forward clearance
+        lidar_speed_factor = max(0.0, min(1.0, (center_dist - 10.0) / 18.0))
+        turn_speed_factor = max(0.0, 1.0 - abs(heading_err) * 1.8)
+        curvature_factor = min(lidar_speed_factor, turn_speed_factor)
+
+        target_speed = 10.5 + 8.5 * curvature_factor
         speed_error = target_speed - speed
 
         if speed_error > 0:
@@ -75,7 +92,7 @@ def run_pid_agent(host: str = "127.0.0.1", port: int = 8765, max_steps: int = 10
             brake_cmd = 0.0
         else:
             throttle_cmd = 0.0
-            brake_cmd = min(0.8, -speed_error * 0.1)
+            brake_cmd = min(0.7, -speed_error * 0.15)
 
         action = [float(steer_cmd), float(throttle_cmd), float(brake_cmd)]
         obs, reward, terminated, truncated, info = client.step(action)

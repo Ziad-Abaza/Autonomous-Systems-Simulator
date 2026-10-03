@@ -74,6 +74,9 @@ class SimulationStudioApp:
         self.manual_brake = 0.0
 
         if not self.headless:
+            # In interactive studio mode, allow free continuous driving without step/checkpoint timeouts
+            self.env.termination_engine.config.max_episode_steps = 0
+            self.env.termination_engine.config.max_seconds_without_checkpoint = 0.0
             self._init_graphics()
 
     def _init_graphics(self) -> None:
