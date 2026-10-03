@@ -1,0 +1,7 @@
+{
+  "status": "completed",
+  "total_timesteps": 512,
+  "episodes_completed": 0,
+  "wall_clock_time": 35.62,
+  "sps": 14.4
+}

@@ -31,8 +31,13 @@ class EpisodeRecorder:
         observation_schema: Optional[Dict[str, Any]] = None,
         action_schema: Optional[Dict[str, Any]] = None,
         reward_config: Optional[Dict[str, Any]] = None,
-        fingerprint: str = ""
+        fingerprint: str = "",
+        scenario_config: Optional[Dict[str, Any]] = None,
+        simulator_version: Optional[str] = None,
+        protocol_version: Optional[str] = None
     ) -> None:
+        from sim_version import SIMULATOR_VERSION
+        from sim_net.protocol import PROTOCOL_VERSION
         self.is_recording = True
         self.frames = []
         self.metadata = {
@@ -41,6 +46,9 @@ class EpisodeRecorder:
             'seed': seed,
             'env_version': env_version,
             'scenario_name': scenario_name,
+            'scenario_config': scenario_config or {},
+            'simulator_version': simulator_version or SIMULATOR_VERSION,
+            'protocol_version': protocol_version or PROTOCOL_VERSION,
             'env_fingerprint': fingerprint,
             'env_config': env_config or {},
             'observation_schema': observation_schema or {},

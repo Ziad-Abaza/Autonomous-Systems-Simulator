@@ -95,13 +95,13 @@
     "length": 4.2,
     "width": 1.8,
     "height": 1.4,
-    "wheelbase": 2.2,
+    "wheelbase": 2.6,
     "track_width": 1.5,
     "cog_height": 0.45,
     "weight_dist_front": 0.52,
     "max_steering_angle": 0.58,
     "steering_rate": 4.5,
-    "max_drive_force": 5000.0,
+    "max_drive_force": 6500.0,
     "max_brake_force": 9000.0,
     "top_speed": 45.0,
     "reverse_max_speed": 10.0,
@@ -185,8 +185,8 @@
     "wrong_direction_max_angle_deg": 120.0,
     "terminate_on_lap_completion": false,
     "laps_to_complete": 1,
-    "max_episode_steps": 5000,
-    "max_seconds_without_checkpoint": 30.0
+    "max_episode_steps": 1500,
+    "max_seconds_without_checkpoint": 20.0
   },
   "randomization_config": {
     "enabled": false,
@@ -450,7 +450,7 @@
       "include_image_channel": false
     },
     "action_space": {
-      "space_type": "discrete",
+      "space_type": "continuous",
       "channels": [
         {
           "name": "steering",
@@ -561,7 +561,7 @@
           "weight": 0.2,
           "enabled": true,
           "params": {
-            "target_speed_ms": 18.0,
+            "target_speed_ms": 20.0,
             "tolerance": 5.0
           },
           "description": "Reward for matching and maintaining target speed"
@@ -722,8 +722,8 @@
     }
   },
   "episode_config": {
-    "max_duration_seconds": 60.0,
-    "max_steps": 3600,
+    "max_duration_seconds": 25.0,
+    "max_steps": 1500,
     "spawn_mode": "track_spawn",
     "initial_speed": 0.0,
     "custom_spawn_pos": [
@@ -806,5 +806,5 @@
       }
     }
   },
-  "fingerprint": "6fc85f0b5de7be00fa175d6fdc7c2f57fc54d1da1a0c9b5def31e8f300d89e16"
+  "fingerprint": "0d7809fa300c22a903efcb4c9cf6e85d0e5d711656e515a03218af28f0ab0ad3"
 }

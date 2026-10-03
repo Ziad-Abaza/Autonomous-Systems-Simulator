@@ -64,7 +64,7 @@ class EnvironmentInspector:
     """
     # Two-tier categorized tabs
     CATEGORY_GEO = ["OVERVIEW", "SCENE", "TRACK", "POINT", "ENTITY"]
-    CATEGORY_RL = ["AGENT", "OBS", "ACTION", "REWARD", "TERM", "SCENARIO", "VALIDATE"]
+    CATEGORY_RL = ["AGENT", "OBS", "ACTION", "REWARD", "TERM", "SCENARIO", "VALIDATE", "TRAIN"]
     ALL_TABS = CATEGORY_GEO + CATEGORY_RL
 
     def __init__(
@@ -107,6 +107,9 @@ class EnvironmentInspector:
         self.on_select_entity_callback: Optional[Callable[[str], None]] = None
         self.on_select_point_callback: Optional[Callable[[int], None]] = None
         self.on_agent_modified: Optional[Callable[[], None]] = None
+        # Training & Experiments panel hooks (provided by the app layer)
+        self.train_provider: Optional[Callable[[], Dict[str, Any]]] = None
+        self.on_train_action: Optional[Callable[[str], None]] = None
 
     def run_validation(self) -> ValidationReport:
         sensor_names = list(self.sensor_manager.sensors.keys()) if self.sensor_manager else []
@@ -243,6 +246,50 @@ class EnvironmentInspector:
                 props.append(PropertyRow("val_btn_run", "Re-Run Validator", "action", "VALIDATE NOW"))
                 for err in rep.errors[:4]:
                     props.append(PropertyRow(f"val_err_{err.subsystem}", f"ERR: {err.subsystem}", "label", err.message[:30]))
+
+        # 8b. TRAINING & EXPERIMENTS TAB
+        elif self.active_tab == "TRAIN":
+            data = self.train_provider() if self.train_provider else {}
+            exps = data.get("experiments", [])
+            sel_exp = data.get("selected_experiment")
+            sel_run = data.get("selected_run") or {}
+
+            props.append(PropertyRow("trn_head_exp", "--- EXPERIMENTS ---", "label", ""))
+            props.append(PropertyRow("trn_create", "Create Experiment", "action", "CREATE FROM ENV"))
+            if not exps:
+                props.append(PropertyRow("trn_none", "No experiments", "label", "Create one first"))
+            for i, e in enumerate(exps[:6]):
+                tag = "*" if e.get("experiment_id") == sel_exp else " "
+                label = f"{tag} {e.get('name','')[:18]} [{e.get('algorithm','')}]"
+                status = "LAUNCHED" if e.get("launched") else "draft"
+                props.append(PropertyRow(f"trn_sel_{i}", label, "action", status.upper()))
+
+            if sel_exp:
+                props.append(PropertyRow("trn_head_run", "--- RUN ---", "label", ""))
+                props.append(PropertyRow("trn_launch", "Launch Training", "action", "LAUNCH PPO"))
+                run_status = sel_run.get("status", "")
+                if run_status in ("RUNNING", "PAUSED", "STARTING", "QUEUED"):
+                    props.append(PropertyRow("trn_cancel", "Cancel Run", "action", "CANCEL"))
+                if sel_run.get("checkpoints"):
+                    props.append(PropertyRow("trn_resume", "Resume From Checkpoint", "action", "RESUME"))
+                    props.append(PropertyRow("trn_eval", "Evaluate Checkpoint", "action", "EVALUATE"))
+                props.append(PropertyRow("trn_repro", "Reproducibility Check", "action", "VERIFY"))
+                props.append(PropertyRow("trn_export", "Export Experiment", "action", "EXPORT"))
+
+                if sel_run:
+                    props.append(PropertyRow("trn_head_mon", "--- RUN MONITOR ---", "label", ""))
+                    props.append(PropertyRow("trn_status", "Status", "label", run_status or "no runs"))
+                    props.append(PropertyRow("trn_steps", "Timesteps", "label", str(sel_run.get("current_timestep", 0))))
+                    props.append(PropertyRow("trn_eps", "Episodes", "label", str(sel_run.get("episode_count", 0))))
+                    for k, v in list(sel_run.get("latest_metrics", {}).items())[:6]:
+                        props.append(PropertyRow(f"trn_m_{k}", k, "label",
+                                                 f"{v:.3f}" if isinstance(v, (int, float)) else str(v)[:16]))
+                    series = sel_run.get("reward_series") or []
+                    if series:
+                        props.append(PropertyRow("trn_chart_rew", "Reward / Episode", "chart", series))
+                    if sel_run.get("error"):
+                        props.append(PropertyRow("trn_err", "Error", "label",
+                                                 str(sel_run["error"].get("message", ""))[:28]))
 
         # 9. SCENE HIERARCHY
         elif self.active_tab == "SCENE":
@@ -457,6 +504,11 @@ class EnvironmentInspector:
         elif prop_id == "scen_rand_en":
             sc.randomization.enabled = not sc.randomization.enabled
 
+        # Training & Experiments actions route to the application service layer
+        elif prop_id.startswith("trn_"):
+            if self.on_train_action:
+                self.on_train_action(prop_id)
+
         # Auto-revalidate
         self.run_validation()
 
@@ -569,6 +621,21 @@ class EnvironmentInspector:
                 lbl_a = f_small.render(str(p.current_value), True, (255, 255, 255))
                 surface.blit(lbl_a, (btn_act.centerx - lbl_a.get_width() // 2, btn_act.centery - lbl_a.get_height() // 2))
                 clickable_buttons.append((btn_act, f"prop_act_{p.prop_id}"))
+
+            elif p.prop_type == "chart":
+                # Compact sparkline for metric series (e.g. episode rewards)
+                series = [float(v) for v in (p.current_value or []) if isinstance(v, (int, float))]
+                chart = pygame.Rect(x + w - 150, row_y + 2, 138, 18)
+                pygame.draw.rect(surface, (20, 26, 36), chart, border_radius=2)
+                if len(series) >= 2:
+                    lo, hi = min(series), max(series)
+                    span = (hi - lo) or 1.0
+                    pts = []
+                    for i, v in enumerate(series[-60:]):
+                        px = chart.x + 2 + i * (chart.w - 4) / max(1, len(series[-60:]) - 1)
+                        py = chart.bottom - 2 - (v - lo) / span * (chart.h - 4)
+                        pts.append((px, py))
+                    pygame.draw.lines(surface, (0, 210, 255), False, pts, 1)
 
             elif p.prop_type == "label":
                 lbl_v = f_small.render(str(p.current_value), True, (150, 160, 175))

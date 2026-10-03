@@ -1,0 +1,8 @@
+{"kind": "checkpoint", "path": "checkpoints/policy_256.pt", "created_at": 1791014398.4165, "step": 256, "metadata": {"algorithm": "ppo", "experiment_id": "exp_556fe0488d4db907", "run_id": "run_20261003_105952_ebf6d909", "env_fingerprint": "0d7809fa300c22a903efcb4c9cf6e85d0e5d711656e515a03218af28f0ab0ad3"}}
+{"kind": "evaluation", "path": "evaluation/eval_256.json", "created_at": 1791014415.3404, "step": 256, "metadata": {}}
+{"kind": "replay", "path": "replays/eval_256_ep0.json", "created_at": 1791014415.4477, "step": 256, "metadata": {"episode": 0, "evaluation": true}}
+{"kind": "checkpoint", "path": "checkpoints/policy_512.pt", "created_at": 1791014416.2667, "step": 512, "metadata": {"algorithm": "ppo", "experiment_id": "exp_556fe0488d4db907", "run_id": "run_20261003_105952_ebf6d909", "env_fingerprint": "0d7809fa300c22a903efcb4c9cf6e85d0e5d711656e515a03218af28f0ab0ad3"}}
+{"kind": "evaluation", "path": "evaluation/eval_512.json", "created_at": 1791014433.1038, "step": 512, "metadata": {}}
+{"kind": "replay", "path": "replays/eval_512_ep0.json", "created_at": 1791014433.2282, "step": 512, "metadata": {"episode": 0, "evaluation": true}}
+{"kind": "checkpoint", "path": "checkpoints/policy_final.pt", "created_at": 1791014433.2375, "step": 512, "metadata": {"algorithm": "ppo", "final": true, "experiment_id": "exp_556fe0488d4db907", "run_id": "run_20261003_105952_ebf6d909", "env_fingerprint": "0d7809fa300c22a903efcb4c9cf6e85d0e5d711656e515a03218af28f0ab0ad3"}}
+{"kind": "evaluation", "path": "evaluation/eval_20261003_110058_7fbb8bcf.json", "created_at": 1791014458.0172, "step": 0, "metadata": {}}

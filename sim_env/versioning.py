@@ -109,7 +109,8 @@ class EnvironmentVersionManager:
             return {
                 k: EnvironmentVersionManager._strip_metadata(v)
                 for k, v in data.items()
-                if k not in ("version", "timestamp", "last_saved", "author")
+                if k not in ("version", "timestamp", "last_saved", "author",
+                             "environment_version", "schema_version", "fingerprint")
             }
         elif isinstance(data, list):
             return [EnvironmentVersionManager._strip_metadata(item) for item in data]

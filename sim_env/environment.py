@@ -102,6 +102,17 @@ class SimulationEnvironment:
         if self.agent is not None:
             self._compile_agent_pipelines()
 
+        # Snapshot base sensor noise levels so scenario multipliers are applied
+        # idempotently on every reset instead of compounding.
+        self._base_sensor_noise: Dict[str, Dict[str, float]] = {}
+        for s_name, sensor in self.sensors.sensors.items():
+            base: Dict[str, float] = {}
+            for attr in ("noise_std", "accel_noise_std", "gyro_noise_std"):
+                if hasattr(sensor, attr):
+                    base[attr] = float(getattr(sensor, attr))
+            if base:
+                self._base_sensor_noise[s_name] = base
+
         # Active physical properties
         fric_mult = self.scenario_def.surface_friction_mult if self.scenario_def else self.scenario.surface_friction_mult
         self.active_surface_friction = self.road_def.default_friction * fric_mult
@@ -111,6 +122,16 @@ class SimulationEnvironment:
         self.is_done = False
         self.last_action = [0.0, 0.0, 0.0]
         self.last_termination_reason_dict: Dict[str, Any] = {"reason": "running"}
+        self._scenario_time_limit_s: Optional[float] = None
+
+    def _apply_sensor_noise_multiplier(self, mult: float) -> None:
+        """Scales all sensor noise levels relative to their captured base values."""
+        for s_name, base in self._base_sensor_noise.items():
+            sensor = self.sensors.sensors.get(s_name)
+            if sensor is None:
+                continue
+            for attr, base_val in base.items():
+                setattr(sensor, attr, base_val * mult)
 
     def _compile_agent_pipelines(self) -> None:
         """Compiles authoring agent spaces and functions into zero-overhead runtime engines."""
@@ -189,6 +210,7 @@ class SimulationEnvironment:
             surf_f = dr_params.get("surface_friction_mult", 1.0)
             lat_jit = dr_params.get("spawn_lateral_jitter_m", 0.0)
             yaw_jit = math.radians(dr_params.get("spawn_heading_jitter_deg", 0.0))
+            noise_f = dr_params.get("sensor_noise_mult", 1.0)
         else:
             legacy_dr = self.domain_randomizer.sample_parameters(self.clock.rng)
             mass_f = legacy_dr['mass_factor']
@@ -196,9 +218,19 @@ class SimulationEnvironment:
             surf_f = legacy_dr['surface_friction_factor']
             lat_jit = legacy_dr['spawn_lateral_jitter']
             yaw_jit = legacy_dr['spawn_heading_jitter']
+            noise_f = legacy_dr.get('sensor_noise_factor', 1.0)
 
         scen_surf_mult = self.scenario_def.surface_friction_mult if self.scenario_def else self.scenario.surface_friction_mult
         self.active_surface_friction = self.road_def.default_friction * scen_surf_mult * surf_f
+
+        # Scenario sensor noise override: scale each sensor's base noise levels.
+        scen_noise_mult = self.scenario_def.sensor_noise_mult if self.scenario_def else 1.0
+        self._apply_sensor_noise_multiplier(scen_noise_mult * noise_f)
+
+        # Scenario episode time limit override (consumed by step() truncation check).
+        self._scenario_time_limit_s: Optional[float] = (
+            self.scenario_def.time_limit_override if self.scenario_def else None
+        )
 
         # Vehicle parameters
         self.vehicle.config.mass = self.base_vehicle_config.mass * mass_f
@@ -424,11 +456,20 @@ class SimulationEnvironment:
                 "is_truncation": truncated
             }
 
-        # Episode duration limit check from EpisodeConfiguration
-        if not terminated and not truncated and self.episode_config.max_duration_seconds > 0:
-            if self.clock.sim_time >= self.episode_config.max_duration_seconds:
+        # Episode duration limit: scenario time_limit_override takes precedence
+        effective_max_duration = (
+            self._scenario_time_limit_s
+            if self._scenario_time_limit_s is not None
+            else self.episode_config.max_duration_seconds
+        )
+        if not terminated and not truncated and effective_max_duration > 0:
+            if self.clock.sim_time >= effective_max_duration:
                 truncated = True
-                term_reason = "max_duration_exceeded"
+                term_reason = (
+                    "scenario_time_limit_exceeded"
+                    if self._scenario_time_limit_s is not None
+                    else "max_duration_exceeded"
+                )
                 self.last_termination_reason_dict = {
                     "reason": term_reason,
                     "step": self.current_step,

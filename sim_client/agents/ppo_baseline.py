@@ -81,10 +81,13 @@ class ActorCritic(nn.Module):
 class PPORunner:
     """
     Executes reproducible PPO training against the hardened AI environment.
+    Supports multiple parallel environments (contiguous per-env rollout
+    segments with per-segment GAE) and optional on_step/on_update hooks for
+    training-platform metrics, checkpoints, and trajectory capture.
     """
     def __init__(
         self,
-        env: SimulationEnvironment,
+        env,
         lr: float = 3e-4,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
@@ -96,9 +99,14 @@ class PPORunner:
         num_epochs: int = 4,
         batch_size: int = 256,
         seed: int = 42,
-        device: str = "cpu"
+        device: str = "cpu",
+        on_update=None,
+        on_step=None,
+        resume_checkpoint: Optional[str] = None
     ):
-        self.env = env
+        # env may be a single environment or a list of independent envs
+        self.envs = list(env) if isinstance(env, (list, tuple)) else [env]
+        self.env = self.envs[0]
         self.lr = lr
         self.gamma = gamma
         self.gae_lambda = gae_lambda
@@ -111,13 +119,16 @@ class PPORunner:
         self.batch_size = batch_size
         self.seed = seed
         self.device = torch.device(device)
+        self.on_update = on_update
+        self.on_step = on_step
+        self.global_step_offset = 0
 
         # Fix RNG seeds
         torch.manual_seed(seed)
         np.random.seed(seed)
 
         # Determine dimensions
-        obs_sample = env.reset(seed=seed)[0]
+        obs_sample = self.envs[0].reset(seed=seed)[0]
         if isinstance(obs_sample, dict):
             obs_sample = obs_sample.get('vector', np.zeros(23, dtype=np.float32))
         self.obs_dim = obs_sample.shape[0]
@@ -127,13 +138,22 @@ class PPORunner:
         self.agent = ActorCritic(self.obs_dim, self.act_dim).to(self.device)
         self.optimizer = optim.Adam(self.agent.parameters(), lr=lr, eps=1e-5)
 
+        # Effective rollout length is a multiple of the env count so every env
+        # contributes a contiguous segment (per-segment GAE stays correct).
+        self.steps_per_env = max(1, num_steps // len(self.envs))
+        self.num_steps = self.steps_per_env * len(self.envs)
+
         # Rollout Storage Buffers
-        self.obs_buf = torch.zeros((num_steps, self.obs_dim), dtype=torch.float32, device=self.device)
-        self.actions_buf = torch.zeros((num_steps, self.act_dim), dtype=torch.float32, device=self.device)
-        self.logprobs_buf = torch.zeros(num_steps, dtype=torch.float32, device=self.device)
-        self.rewards_buf = torch.zeros(num_steps, dtype=torch.float32, device=self.device)
-        self.dones_buf = torch.zeros(num_steps, dtype=torch.float32, device=self.device)
-        self.values_buf = torch.zeros(num_steps, dtype=torch.float32, device=self.device)
+        self.obs_buf = torch.zeros((self.num_steps, self.obs_dim), dtype=torch.float32, device=self.device)
+        self.actions_buf = torch.zeros((self.num_steps, self.act_dim), dtype=torch.float32, device=self.device)
+        self.logprobs_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
+        self.rewards_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
+        self.dones_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
+        self.values_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
+
+        # Resume from a previous checkpoint if requested
+        if resume_checkpoint:
+            self.load_checkpoint(resume_checkpoint)
 
         # Performance and training metrics
         self.metrics: Dict[str, Any] = {
@@ -158,35 +178,47 @@ class PPORunner:
     def train(self, total_timesteps: int = 50000, log_interval: int = 2048) -> Dict[str, Any]:
         """Runs the PPO training loop for total_timesteps."""
         start_time = time.perf_counter()
-        obs, info = self.env.reset(seed=self.seed)
-        if isinstance(obs, dict):
-            obs = obs.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
-        next_obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device)
-        next_done_tensor = torch.tensor(0.0, dtype=torch.float32, device=self.device)
+        num_envs = len(self.envs)
+        spe = self.steps_per_env
+
+        def _to_vec(o):
+            if isinstance(o, dict):
+                o = o.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
+            return o
+
+        # Per-env rollout state
+        next_obs_tensors, next_done_tensors = [], []
+        ep_return = [0.0] * num_envs
+        ep_len = [0] * num_envs
+        ep_lat_errors: List[List[float]] = [[] for _ in range(num_envs)]
+        ep_speeds: List[List[float]] = [[] for _ in range(num_envs)]
+
+        for e, env in enumerate(self.envs):
+            o, _ = env.reset(seed=self.seed + e)
+            next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
+            next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
 
         num_updates = max(1, total_timesteps // self.num_steps)
-        global_step = 0
-
-        # Episode stats accumulators
-        ep_return = 0.0
-        ep_len = 0
-        ep_lat_errors = []
-        ep_speeds = []
+        global_step = self.global_step_offset
 
         print("=" * 75)
-        print(f"  PPO TRAINING BENCHMARK STARTING: {total_timesteps} STEPS ({num_updates} UPDATES)")
+        print(f"  PPO TRAINING STARTING: {total_timesteps} STEPS ({num_updates} UPDATES, {num_envs} ENVS)")
         print(f"  Obs Dim: {self.obs_dim} | Act Dim: {self.act_dim} | Rollout Steps: {self.num_steps}")
         print("=" * 75)
 
         for update in range(1, num_updates + 1):
-            # 1. Rollout Collection
+            new_episodes: List[Dict[str, Any]] = []
+
+            # 1. Rollout Collection — contiguous segment per environment
             for step in range(self.num_steps):
+                env_idx = step // spe
+                env = self.envs[env_idx]
                 global_step += 1
-                self.obs_buf[step] = next_obs_tensor
-                self.dones_buf[step] = next_done_tensor
+                self.obs_buf[step] = next_obs_tensors[env_idx]
+                self.dones_buf[step] = next_done_tensors[env_idx]
 
                 with torch.no_grad():
-                    action, logprob, _, value = self.agent.get_action_and_value(next_obs_tensor.unsqueeze(0))
+                    action, logprob, _, value = self.agent.get_action_and_value(next_obs_tensors[env_idx].unsqueeze(0))
                     self.values_buf[step] = value.squeeze()
                 self.actions_buf[step] = action.squeeze(0)
                 self.logprobs_buf[step] = logprob.squeeze()
@@ -198,57 +230,82 @@ class PPORunner:
                     float(np.clip(act_np[1], 0.0, 1.0)),
                     float(np.clip(act_np[2], 0.0, 1.0))
                 ]
-                next_obs, reward, terminated, truncated, step_info = self.env.step(clamped_act)
-                if isinstance(next_obs, dict):
-                    next_obs = next_obs.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
+                next_obs, reward, terminated, truncated, step_info = env.step(clamped_act)
+                next_obs = _to_vec(next_obs)
 
                 self.rewards_buf[step] = float(reward)
                 done = terminated or truncated
-                next_done_tensor = torch.tensor(1.0 if done else 0.0, dtype=torch.float32, device=self.device)
-                next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=self.device)
+                next_done_tensors[env_idx] = torch.tensor(1.0 if done else 0.0, dtype=torch.float32, device=self.device)
+                next_obs_tensors[env_idx] = torch.tensor(next_obs, dtype=torch.float32, device=self.device)
 
-                ep_return += reward
-                ep_len += 1
-                ep_lat_errors.append(abs(step_info.get('lateral_offset', 0.0)))
-                ep_speeds.append(step_info.get('speed', 0.0))
+                ep_return[env_idx] += reward
+                ep_len[env_idx] += 1
+                ep_lat_errors[env_idx].append(abs(step_info.get('lateral_offset', 0.0)))
+                ep_speeds[env_idx].append(step_info.get('speed', 0.0))
+
+                if self.on_step is not None:
+                    self.on_step({
+                        'env_idx': env_idx,
+                        'global_step': global_step,
+                        'obs': next_obs,
+                        'action': clamped_act,
+                        'reward': float(reward),
+                        'terminated': bool(terminated),
+                        'truncated': bool(truncated),
+                        'info': step_info,
+                    })
 
                 if done:
-                    self.metrics['episodes_completed'] += 1
-                    self.metrics['episode_returns'].append(float(ep_return))
-                    self.metrics['episode_lengths'].append(ep_len)
-                    self.metrics['mean_lateral_errors'].append(float(np.mean(ep_lat_errors)) if ep_lat_errors else 0.0)
-                    self.metrics['mean_speeds'].append(float(np.mean(ep_speeds)) if ep_speeds else 0.0)
-                    self.metrics['completion_rates'].append(step_info.get('checkpoints_passed', 0))
+                    ep_stats = {
+                        'env_idx': env_idx,
+                        'return': float(ep_return[env_idx]),
+                        'length': int(ep_len[env_idx]),
+                        'termination_reason': step_info.get('termination_reason', ''),
+                        'mean_lateral_error': float(np.mean(ep_lat_errors[env_idx])) if ep_lat_errors[env_idx] else 0.0,
+                        'mean_speed': float(np.mean(ep_speeds[env_idx])) if ep_speeds[env_idx] else 0.0,
+                        'checkpoints_passed': step_info.get('checkpoints_passed', 0),
+                        'is_colliding': bool(step_info.get('is_colliding', False)),
+                        'is_on_road': bool(step_info.get('is_on_road', True)),
+                    }
+                    new_episodes.append(ep_stats)
 
-                    reason = step_info.get('termination_reason', '')
+                    self.metrics['episodes_completed'] += 1
+                    self.metrics['episode_returns'].append(ep_stats['return'])
+                    self.metrics['episode_lengths'].append(ep_stats['length'])
+                    self.metrics['mean_lateral_errors'].append(ep_stats['mean_lateral_error'])
+                    self.metrics['mean_speeds'].append(ep_stats['mean_speed'])
+                    self.metrics['completion_rates'].append(ep_stats['checkpoints_passed'])
+
+                    reason = ep_stats['termination_reason']
                     if 'collision' in reason:
                         self.metrics['collision_count'] += 1
                     elif 'off_road' in reason:
                         self.metrics['off_road_count'] += 1
 
-                    ep_return = 0.0
-                    ep_len = 0
-                    ep_lat_errors = []
-                    ep_speeds = []
-                    reset_obs, _ = self.env.reset()
-                    if isinstance(reset_obs, dict):
-                        reset_obs = reset_obs.get('vector', np.zeros(self.obs_dim, dtype=np.float32))
-                    next_obs_tensor = torch.tensor(reset_obs, dtype=torch.float32, device=self.device)
+                    ep_return[env_idx] = 0.0
+                    ep_len[env_idx] = 0
+                    ep_lat_errors[env_idx] = []
+                    ep_speeds[env_idx] = []
+                    reset_obs, _ = env.reset()
+                    next_obs_tensors[env_idx] = torch.tensor(_to_vec(reset_obs), dtype=torch.float32, device=self.device)
 
-            # 2. Generalized Advantage Estimation (GAE)
+            # 2. Generalized Advantage Estimation (per contiguous env segment)
             with torch.no_grad():
-                next_value = self.agent.get_value(next_obs_tensor.unsqueeze(0)).reshape(1, -1)
                 advantages = torch.zeros_like(self.rewards_buf)
-                lastgaelam = 0.0
-                for t in reversed(range(self.num_steps)):
-                    if t == self.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done_tensor
-                        nextvalues = next_value
-                    else:
-                        nextnonterminal = 1.0 - self.dones_buf[t + 1]
-                        nextvalues = self.values_buf[t + 1]
-                    delta = self.rewards_buf[t] + self.gamma * nextvalues * nextnonterminal - self.values_buf[t]
-                    advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
+                for e in range(num_envs):
+                    seg = slice(e * spe, (e + 1) * spe)
+                    next_value = self.agent.get_value(next_obs_tensors[e].unsqueeze(0)).reshape(1, -1)
+                    lastgaelam = 0.0
+                    for t in reversed(range(spe)):
+                        idx = e * spe + t
+                        if t == spe - 1:
+                            nextnonterminal = 1.0 - next_done_tensors[e]
+                            nextvalues = next_value
+                        else:
+                            nextnonterminal = 1.0 - self.dones_buf[idx + 1]
+                            nextvalues = self.values_buf[idx + 1]
+                        delta = self.rewards_buf[idx] + self.gamma * nextvalues * nextnonterminal - self.values_buf[idx]
+                        advantages[idx] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
                 returns = advantages + self.values_buf
 
             # 3. PPO Optimization Epochs
@@ -310,12 +367,28 @@ class PPORunner:
 
             # Record iteration diagnostics
             elapsed = time.perf_counter() - start_time
-            current_sps = global_step / max(1e-4, elapsed)
+            local_steps = global_step - self.global_step_offset
+            current_sps = local_steps / max(1e-4, elapsed)
             self.metrics['policy_losses'].append(float(pg_loss.item()))
             self.metrics['value_losses'].append(float(v_loss.item()))
             self.metrics['entropies'].append(float(entropy_loss.item()))
             self.metrics['approx_kls'].append(float(approx_kl.item()))
             self.metrics['explained_variances'].append(float(explained_var))
+
+            if self.on_update is not None:
+                self.on_update({
+                    'update': update,
+                    'num_updates': num_updates,
+                    'global_step': int(global_step),
+                    'sps': float(current_sps),
+                    'policy_loss': float(pg_loss.item()),
+                    'value_loss': float(v_loss.item()),
+                    'entropy': float(entropy_loss.item()),
+                    'approx_kl': float(approx_kl.item()),
+                    'explained_variance': float(explained_var),
+                    'episodes': new_episodes,
+                    'episodes_completed': self.metrics['episodes_completed'],
+                })
 
             if update % max(1, num_updates // 10) == 0 or update == num_updates:
                 mean_r = np.mean(self.metrics['episode_returns'][-10:]) if self.metrics['episode_returns'] else 0.0
@@ -353,7 +426,7 @@ class PPORunner:
 
         return self.metrics
 
-    def save_checkpoint(self, path: str) -> None:
+    def save_checkpoint(self, path: str, step: Optional[int] = None) -> None:
         """Saves model weights and optimizer state to disk."""
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         torch.save({
@@ -362,6 +435,15 @@ class PPORunner:
             'obs_dim': self.obs_dim,
             'act_dim': self.act_dim,
             'seed': self.seed,
-            'metrics': self.metrics
+            'metrics': self.metrics,
+            'timestep': int(step if step is not None else self.metrics.get('total_timesteps', 0)),
         }, path)
         print(f"[PPO Runner] Checkpoint saved to {path}")
+
+    def load_checkpoint(self, path: str) -> None:
+        """Restores model/optimizer state; subsequent timesteps continue the count."""
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        self.agent.load_state_dict(ckpt['model_state_dict'])
+        self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        self.global_step_offset = int(ckpt.get('timestep') or ckpt.get('metrics', {}).get('total_timesteps', 0))
+        print(f"[PPO Runner] Resumed from checkpoint {path} (timestep offset {self.global_step_offset})")

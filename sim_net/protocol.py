@@ -24,6 +24,7 @@ class MessageType:
 
 
 PROTOCOL_VERSION = "2.0"
+SUPPORTED_PROTOCOL_VERSIONS = ("2.0",)
 
 
 class ProtocolEncoder:

@@ -1,0 +1,94 @@
+{
+  "eval_id": "eval_20261003_110058_7fbb8bcf",
+  "checkpoint_path": "checkpoints\\policy_final.pt",
+  "algorithm": "ppo",
+  "env_fingerprint": "0d7809fa300c22a903efcb4c9cf6e85d0e5d711656e515a03218af28f0ab0ad3",
+  "scenario_id": "basic_lane_following",
+  "deterministic_policy": true,
+  "seeds": [
+    42
+  ],
+  "episodes": [
+    {
+      "seed": 42,
+      "reward": 1185.8451,
+      "length": 1501,
+      "termination_reason": "max_duration_exceeded",
+      "completed": false,
+      "collided": false,
+      "off_road": false,
+      "timed_out": true,
+      "mean_lateral_error": 0.0,
+      "mean_heading_error": 0.0,
+      "mean_speed": 0.0033
+    },
+    {
+      "seed": 42,
+      "reward": 1185.8451,
+      "length": 1501,
+      "termination_reason": "max_duration_exceeded",
+      "completed": false,
+      "collided": false,
+      "off_road": false,
+      "timed_out": true,
+      "mean_lateral_error": 0.0,
+      "mean_heading_error": 0.0,
+      "mean_speed": 0.0033
+    },
+    {
+      "seed": 42,
+      "reward": 1185.8451,
+      "length": 1501,
+      "termination_reason": "max_duration_exceeded",
+      "completed": false,
+      "collided": false,
+      "off_road": false,
+      "timed_out": true,
+      "mean_lateral_error": 0.0,
+      "mean_heading_error": 0.0,
+      "mean_speed": 0.0033
+    },
+    {
+      "seed": 42,
+      "reward": 1185.8451,
+      "length": 1501,
+      "termination_reason": "max_duration_exceeded",
+      "completed": false,
+      "collided": false,
+      "off_road": false,
+      "timed_out": true,
+      "mean_lateral_error": 0.0,
+      "mean_heading_error": 0.0,
+      "mean_speed": 0.0033
+    },
+    {
+      "seed": 42,
+      "reward": 1185.8451,
+      "length": 1501,
+      "termination_reason": "max_duration_exceeded",
+      "completed": false,
+      "collided": false,
+      "off_road": false,
+      "timed_out": true,
+      "mean_lateral_error": 0.0,
+      "mean_heading_error": 0.0,
+      "mean_speed": 0.0033
+    }
+  ],
+  "aggregate": {
+    "episode_count": 5,
+    "mean_reward": 1185.8451,
+    "std_reward": 0.0,
+    "min_reward": 1185.8451,
+    "max_reward": 1185.8451,
+    "completion_rate": 0.0,
+    "collision_rate": 0.0,
+    "off_road_rate": 0.0,
+    "timeout_rate": 1.0,
+    "mean_episode_length": 1501.0,
+    "mean_lateral_error": 0.0,
+    "mean_heading_error": 0.0,
+    "mean_speed": 0.0033
+  },
+  "created_at": 1791014458.015293
+}

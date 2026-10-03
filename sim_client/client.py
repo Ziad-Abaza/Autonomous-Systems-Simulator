@@ -30,8 +30,9 @@ class SimulationClient:
         self.sock.settimeout(self.timeout)
         self.sock.connect((self.host, self.port))
 
-        # Send Handshake
-        self._send(MessageType.HANDSHAKE, {})
+        # Send Handshake declaring supported protocol versions for negotiation
+        from sim_net.protocol import SUPPORTED_PROTOCOL_VERSIONS
+        self._send(MessageType.HANDSHAKE, {'protocol_versions': list(SUPPORTED_PROTOCOL_VERSIONS)})
         msg_type, payload = self._receive()
         if msg_type != MessageType.HANDSHAKE_ACK:
             raise ConnectionError(f"Handshake failed, unexpected response: {msg_type}")

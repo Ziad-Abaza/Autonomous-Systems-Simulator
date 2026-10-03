@@ -12,8 +12,29 @@ import time
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
-from sim_net.protocol import MessageType, ProtocolEncoder
+from sim_net.protocol import MessageType, ProtocolEncoder, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from sim_env.environment import SimulationEnvironment
+
+
+def _version_key(v: str) -> tuple:
+    """Sortable key for dotted protocol version strings."""
+    parts = []
+    for p in str(v).split('.'):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def _negotiate_protocol(client_versions) -> Optional[str]:
+    """Picks the highest mutually supported protocol version, or None."""
+    if not client_versions:
+        return PROTOCOL_VERSION  # Legacy client: assume it speaks the current protocol
+    mutual = [v for v in client_versions if v in SUPPORTED_PROTOCOL_VERSIONS]
+    if not mutual:
+        return None
+    return max(mutual, key=_version_key)
 
 
 class SimulationServer:
@@ -146,9 +167,18 @@ class SimulationServer:
 
     def _handle_message(self, msg_type: str, payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         if msg_type == MessageType.HANDSHAKE:
+            negotiated = _negotiate_protocol(
+                payload.get('protocol_versions') or payload.get('client_protocol_versions')
+            )
+            if negotiated is None:
+                return MessageType.ERROR, {
+                    'error': 'protocol_version_mismatch: no mutually supported protocol version',
+                    'supported_versions': list(SUPPORTED_PROTOCOL_VERSIONS)
+                }
             # Return environment spec
             spec = {
-                'protocol_version': '2.0',
+                'protocol_version': negotiated,
+                'supported_versions': list(SUPPORTED_PROTOCOL_VERSIONS),
                 'action_space': self.env.action_config.to_dict(),
                 'observation_schema': self.env.observation_schema.to_dict(),
                 'vector_dim': self.env.observation_schema.compute_vector_dim(),
@@ -181,7 +211,8 @@ class SimulationServer:
                 term_rules = [{'rules': self.env.termination_engine.config.to_dict()}]
 
             contract = {
-                'protocol_version': '2.0',
+                'protocol_version': PROTOCOL_VERSION,
+                'supported_versions': list(SUPPORTED_PROTOCOL_VERSIONS),
                 'environment_id': self.env.road_def.name,
                 'environment_version': getattr(self.env, 'environment_version', '1.0.0'),
                 'physics_hz': self.env.clock.physics_hz,

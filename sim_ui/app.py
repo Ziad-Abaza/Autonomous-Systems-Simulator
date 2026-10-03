@@ -37,6 +37,12 @@ from sim_recorder.replay import EpisodeReplayPlayer
 from sim_project.serializer import EnvironmentProject
 from sim_env.templates import EnvironmentTemplateManager
 from sim_env.export import TrainingExporter
+from sim_experiment.manifest import ExperimentManifest, TrainingConfig, EvaluationConfig
+from sim_experiment.manager import ExperimentManager
+from sim_experiment.orchestrator import LocalTrainingOrchestrator
+from sim_experiment.run import RunManager, RunStatus
+from sim_experiment.metrics import MetricsReader
+from sim_experiment.reproduce import check_reproducibility
 from sim_project.presets import (
     create_oval_circuit,
     create_serpentine_track,
@@ -76,6 +82,13 @@ class SimulationStudioApp:
         # 3. Recorder & Replay
         self.recorder = EpisodeRecorder()
         self.replay_player = EpisodeReplayPlayer()
+
+        # 3b. Training & Experiment services (UI calls services; never touches internals)
+        exp_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiments")
+        self.exp_mgr = ExperimentManager(root_dir=exp_root)
+        self.orch = LocalTrainingOrchestrator(experiments_root=exp_root)
+        self.run_mgr = RunManager()
+        self.train_state = {"selected_experiment": None, "selected_run_id": None, "last_poll": 0.0}
 
         # 4. Manual driving inputs
         self.manual_steer = 0.0
@@ -242,6 +255,10 @@ class SimulationStudioApp:
             print(f"[Studio] Tool activated: {tool_type}. Click canvas to place.")
         self.inspector.on_start_place_tool = do_place_tool
 
+        # Training & Experiments panel
+        self.inspector.train_provider = self._train_provider
+        self.inspector.on_train_action = self._train_action
+
         # Hook synthetic camera sensor to offscreen renderer
         cam_sensor = self.env.sensors.get_sensor("rgb_camera")
         if cam_sensor and hasattr(cam_sensor, 'set_offscreen_renderer'):
@@ -298,11 +315,163 @@ class SimulationStudioApp:
             self.gl_ctx.screen.use()
             self.gl_ctx.viewport = (0, 0, self.width, self.height)
 
+    # ------------------------------------------------- training & experiments
+
+    def _train_provider(self) -> Dict[str, Any]:
+        """Supplies the inspector TRAIN tab with service-layer state (throttled)."""
+        exps = self.exp_mgr.list_experiments()
+        sel_exp = self.train_state["selected_experiment"]
+        if sel_exp is None and exps:
+            sel_exp = exps[0]["experiment_id"]
+            self.train_state["selected_experiment"] = sel_exp
+
+        sel_run = None
+        if sel_exp:
+            try:
+                exp_dir = self.exp_mgr.experiment_dir(sel_exp)
+                runs = self.run_mgr.list_runs(exp_dir)
+                run_id = self.train_state["selected_run_id"] or (runs[-1]["run_id"] if runs else None)
+                if run_id:
+                    run = self.run_mgr.load_run(exp_dir, run_id)
+                    sel_run = run.to_dict()
+                    mpath = os.path.join(exp_dir, "runs", run_id, "metrics.jsonl")
+                    eps = MetricsReader(mpath).by_scope("episode")
+                    sel_run["reward_series"] = [
+                        r["metrics"].get("reward") for r in eps[-60:]
+                        if isinstance(r.get("metrics", {}).get("reward"), (int, float))
+                    ]
+            except Exception:
+                sel_run = None
+
+        return {
+            "experiments": exps,
+            "selected_experiment": sel_exp,
+            "selected_run": sel_run,
+        }
+
+    def _train_action(self, prop_id: str) -> None:
+        """Dispatches TRAIN tab actions to the application services."""
+        ts = self.train_state
+        try:
+            if prop_id == "trn_create":
+                manifest = ExperimentManifest.from_project(
+                    project=self.project,
+                    scenario=self.project.scenario_def,
+                    training=TrainingConfig(algorithm="ppo", total_timesteps=20000,
+                                            checkpoint_frequency=5000),
+                    evaluation=EvaluationConfig(eval_seeds=[0, 1], num_episodes=3),
+                    name=f"{self.project.name} experiment",
+                    random_seed=42,
+                )
+                exp_dir = self.exp_mgr.create(manifest)
+                ts["selected_experiment"] = manifest.experiment_id
+                print(f"[Studio] Experiment created: {manifest.experiment_id}")
+
+            elif prop_id.startswith("trn_sel_"):
+                idx = int(prop_id.replace("trn_sel_", ""))
+                exps = self.exp_mgr.list_experiments()
+                if 0 <= idx < len(exps):
+                    ts["selected_experiment"] = exps[idx]["experiment_id"]
+                    ts["selected_run_id"] = None
+
+            elif prop_id == "trn_launch" and ts["selected_experiment"]:
+                manifest = self.exp_mgr.load(ts["selected_experiment"])
+                exp_dir = self.exp_mgr.experiment_dir(manifest.experiment_id)
+                run_id = self.orch.launch(manifest, exp_dir, trainer="ppo")
+                self.exp_mgr.mark_launched(manifest.experiment_id)
+                ts["selected_run_id"] = run_id
+                print(f"[Studio] Launched PPO run {run_id}")
+
+            elif prop_id == "trn_cancel" and ts["selected_experiment"] and ts["selected_run_id"]:
+                exp_dir = self.exp_mgr.experiment_dir(ts["selected_experiment"])
+                self.orch.cancel(exp_dir, ts["selected_run_id"])
+                print(f"[Studio] Cancelled run {ts['selected_run_id']}")
+
+            elif prop_id == "trn_resume" and ts["selected_experiment"] and ts["selected_run_id"]:
+                from sim_experiment.artifacts import ArtifactRegistry
+                exp_dir = self.exp_mgr.experiment_dir(ts["selected_experiment"])
+                rd = self.run_mgr.run_dir(exp_dir, ts["selected_run_id"])
+                ckpt = ArtifactRegistry(rd).latest_of_kind("checkpoint")
+                if ckpt:
+                    manifest = self.exp_mgr.load(ts["selected_experiment"])
+                    new_id = self.orch.launch(
+                        manifest, exp_dir, trainer="ppo",
+                        resume_from={"parent_run_id": ts["selected_run_id"],
+                                     "checkpoint": os.path.join(rd, ckpt["path"])},
+                    )
+                    ts["selected_run_id"] = new_id
+                    print(f"[Studio] Resumed as run {new_id}")
+
+            elif prop_id == "trn_eval" and ts["selected_experiment"] and ts["selected_run_id"]:
+                from sim_experiment.artifacts import ArtifactRegistry
+                from sim_experiment.evaluation import evaluate_policy, make_policy_from_checkpoint
+                from sim_experiment.headless import build_env_from_dicts
+                exp_dir = self.exp_mgr.experiment_dir(ts["selected_experiment"])
+                rd = self.run_mgr.run_dir(exp_dir, ts["selected_run_id"])
+                ckpt = ArtifactRegistry(rd).latest_of_kind("checkpoint")
+                if ckpt:
+                    manifest = self.exp_mgr.load(ts["selected_experiment"])
+                    env = build_env_from_dicts(manifest.environment,
+                                               manifest.scenario_configuration,
+                                               seed=manifest.random_seed)
+                    policy = make_policy_from_checkpoint(os.path.join(rd, ckpt["path"]), "ppo")
+                    result = evaluate_policy(
+                        env, policy,
+                        seeds=manifest.evaluation.eval_seeds,
+                        num_episodes=manifest.evaluation.num_episodes,
+                        result_kwargs={"checkpoint_path": ckpt["path"], "algorithm": "ppo",
+                                       "env_fingerprint": manifest.environment_fingerprint,
+                                       "scenario_id": manifest.scenario_id},
+                    )
+                    eval_path = os.path.join(rd, "evaluation", f"{result.eval_id}.json")
+                    result.save(eval_path)
+                    ArtifactRegistry(rd).register("evaluation",
+                                                  os.path.relpath(eval_path, rd))
+                    self.run_mgr.add_artifact_ref(exp_dir, ts["selected_run_id"],
+                                                  "evaluation", os.path.relpath(eval_path, rd))
+                    print(f"[Studio] Evaluation: mean_reward={result.aggregate['mean_reward']}")
+
+            elif prop_id == "trn_repro" and ts["selected_experiment"]:
+                report = check_reproducibility(
+                    self.exp_mgr.experiment_dir(ts["selected_experiment"]))
+                status = "REPRODUCIBLE" if report["reproducible"] else "NOT REPRODUCIBLE"
+                print(f"[Studio] Reproducibility: {status} "
+                      f"({len(report['checks'])} checks, failures: {report['fatal_failures']})")
+
+            elif prop_id == "trn_export" and ts["selected_experiment"]:
+                dest = os.path.join(self.exp_mgr.root_dir, "exported",
+                                    ts["selected_experiment"])
+                self.exp_mgr.export(ts["selected_experiment"], dest)
+                print(f"[Studio] Exported experiment to {dest}")
+
+        except Exception as e:
+            print(f"[Studio] Training action '{prop_id}' failed: {e}")
+
+    def _poll_training_runs(self) -> None:
+        """Throttled run monitoring: refreshes status/progress ~1 Hz."""
+        now = time.time()
+        if now - self.train_state["last_poll"] < 1.0:
+            return
+        self.train_state["last_poll"] = now
+        sel_exp = self.train_state["selected_experiment"]
+        if not sel_exp:
+            return
+        try:
+            exp_dir = self.exp_mgr.experiment_dir(sel_exp)
+            for summary in self.run_mgr.list_runs(exp_dir):
+                if summary["status"] in ("QUEUED", "STARTING", "RUNNING", "PAUSED"):
+                    self.orch.poll(exp_dir, summary["run_id"])
+        except Exception:
+            pass
+
     def run(self) -> None:
         """Main simulation execution loop."""
         print("[Studio] AI Simulation Studio started. Press ESC to exit.")
         while self.is_running:
             dt = 1.0 / 60.0
+
+            # 0. Throttled training-run monitoring
+            self._poll_training_runs()
 
             # 1. Process Network Messages from External AI
             external_stepped = self.server.poll_and_process()
@@ -543,7 +712,8 @@ class SimulationStudioApp:
                             observation_schema=obs_schema,
                             action_schema=act_schema,
                             reward_config=rew_cfg,
-                            fingerprint=fp
+                            fingerprint=fp,
+                            scenario_config=self.env.scenario_def.to_dict() if self.env.scenario_def else {}
                         )
                         print("[Studio] Started recording episode frames with complete Phase 3 metadata...")
                     return
