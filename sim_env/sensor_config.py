@@ -33,6 +33,8 @@ DEFAULT_CAMERA_PARAMS: Dict[str, Any] = {
     "width": 84, "height": 84, "fov_degrees": 75.0,
     "update_frequency_hz": 30.0,
     "local_pos": [1.0, 0.0, 1.1], "local_yaw": 0.0, "local_pitch": -0.05,
+    "local_roll": 0.0,
+    "near_clip": 0.5, "far_clip": 1000.0,
     "noise_std": 0.0, "latency_seconds": 0.0,
 }
 DEFAULT_LIDAR_PARAMS: Dict[str, Any] = {
@@ -137,6 +139,9 @@ class SensorConfig:
                 local_pos=local_pos,
                 local_yaw=float(p["local_yaw"]),
                 local_pitch=float(p["local_pitch"]),
+                local_roll=float(p.get("local_roll", 0.0)),
+                near_clip=float(p.get("near_clip", 0.5)),
+                far_clip=float(p.get("far_clip", 1000.0)),
                 noise_std=float(p["noise_std"]),
                 latency_seconds=float(p["latency_seconds"]))
         if self.sensor_type == "lidar_rays":

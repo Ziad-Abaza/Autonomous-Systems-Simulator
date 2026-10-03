@@ -26,6 +26,9 @@ class CameraSensor(BaseSensor):
         local_pos: Optional[Vec3] = None,
         local_yaw: float = 0.0,
         local_pitch: float = -0.05,  # Slightly angled down towards road
+        local_roll: float = 0.0,
+        near_clip: float = 0.5,
+        far_clip: float = 1000.0,
         noise_std: float = 0.0,
         latency_seconds: float = 0.0
     ):
@@ -42,6 +45,9 @@ class CameraSensor(BaseSensor):
         self.height = int(height)
         self.fov_degrees = float(fov_degrees)
         self.local_pitch = float(local_pitch)
+        self.local_roll = float(local_roll)
+        self.near_clip = float(near_clip)
+        self.far_clip = float(far_clip)
 
         # Offscreen renderer reference if set by rendering engine
         self._offscreen_renderer = None
@@ -157,5 +163,8 @@ class CameraSensor(BaseSensor):
             'height': self.height,
             'fov_degrees': self.fov_degrees,
             'local_pitch': self.local_pitch,
+            'local_roll': self.local_roll,
+            'near_clip': self.near_clip,
+            'far_clip': self.far_clip,
         })
         return d

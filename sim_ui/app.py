@@ -291,11 +291,26 @@ class SimulationStudioApp:
             fwd_x = math.cos(cam_yaw)
             fwd_y = math.sin(cam_yaw)
             pitch = getattr(camera_sensor, "local_pitch", 0.0)
+            roll = getattr(camera_sensor, "local_roll", 0.0)
             self.agent_camera.pos = Vec3(cam_x, cam_y, cam_z)
             self.agent_camera.target = Vec3(
                 cam_x + fwd_x * 20.0, cam_y + fwd_y * 20.0,
                 cam_z + math.sin(pitch) * 20.0)
             self.agent_camera.fov_degrees = camera_sensor.fov_degrees
+            self.agent_camera.near_clip = getattr(camera_sensor, "near_clip", 0.5)
+            self.agent_camera.far_clip = getattr(camera_sensor, "far_clip", 1000.0)
+            # Roll rotates the up vector around the forward axis.
+            if roll:
+                world_up = np.array([0.0, 0.0, 1.0])
+                fwd = np.array([fwd_x, fwd_y, math.sin(pitch)])
+                fwd = fwd / max(1e-9, np.linalg.norm(fwd))
+                right = np.cross(fwd, world_up)
+                rn = np.linalg.norm(right)
+                right = right / rn if rn > 1e-6 else np.array([0.0, 1.0, 0.0])
+                up = math.cos(roll) * world_up + math.sin(roll) * right
+                self.agent_camera.up = Vec3(*up)
+            else:
+                self.agent_camera.up = Vec3(0.0, 0.0, 1.0)
 
             # Render 3D scene from vehicle camera with ZERO debug overlays
             self.renderer.render_frame(
