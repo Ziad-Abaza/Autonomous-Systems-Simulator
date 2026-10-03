@@ -82,10 +82,8 @@ class UIOverlayRenderer:
         self.ui_surface.fill((0, 0, 0, 0))
 
     def render_to_screen(self) -> None:
-        """Uploads UI surface pixels to texture and draws blended fullscreen quad."""
-        # Convert Pygame surface to raw RGBA bytes
-        raw_data = pygame.image.tobytes(self.ui_surface, 'RGBA', False)
-        self.ui_texture.write(raw_data)
+        """Uploads UI surface pixels to texture using zero-copy buffer and draws blended fullscreen quad."""
+        self.ui_texture.write(self.ui_surface.get_buffer())
 
         self.ctx.disable(moderngl.DEPTH_TEST)
         self.ctx.enable(moderngl.BLEND)

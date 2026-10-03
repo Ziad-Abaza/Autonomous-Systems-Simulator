@@ -54,8 +54,26 @@ class TrackSpatialQueries:
         closest_dist = max_range
         hit_pt = None
 
+        # Ray bounding box
+        rx2 = ray_origin.x + ray_dir.x * max_range
+        ry2 = ray_origin.y + ray_dir.y * max_range
+        ray_min_x = (ray_origin.x if ray_origin.x < rx2 else rx2) - 0.5
+        ray_max_x = (ray_origin.x if ray_origin.x > rx2 else rx2) + 0.5
+        ray_min_y = (ray_origin.y if ray_origin.y < ry2 else ry2) - 0.5
+        ray_max_y = (ray_origin.y if ray_origin.y > ry2 else ry2) + 0.5
+
         # Check track boundary segments
         for seg_a, seg_b in self.track.all_boundary_segments:
+            seg_min_x = seg_a.x if seg_a.x < seg_b.x else seg_b.x
+            seg_max_x = seg_a.x if seg_a.x > seg_b.x else seg_b.x
+            if seg_max_x < ray_min_x or seg_min_x > ray_max_x:
+                continue
+
+            seg_min_y = seg_a.y if seg_a.y < seg_b.y else seg_b.y
+            seg_max_y = seg_a.y if seg_a.y > seg_b.y else seg_b.y
+            if seg_max_y < ray_min_y or seg_min_y > ray_max_y:
+                continue
+
             d = ray_segment_intersection(ray_origin, ray_dir, seg_a, seg_b, closest_dist)
             if d is not None and d < closest_dist:
                 closest_dist = d
@@ -64,6 +82,16 @@ class TrackSpatialQueries:
         # Check additional obstacle segments if any
         if additional_segments:
             for seg_a, seg_b in additional_segments:
+                seg_min_x = seg_a.x if seg_a.x < seg_b.x else seg_b.x
+                seg_max_x = seg_a.x if seg_a.x > seg_b.x else seg_b.x
+                if seg_max_x < ray_min_x or seg_min_x > ray_max_x:
+                    continue
+
+                seg_min_y = seg_a.y if seg_a.y < seg_b.y else seg_b.y
+                seg_max_y = seg_a.y if seg_a.y > seg_b.y else seg_b.y
+                if seg_max_y < ray_min_y or seg_min_y > ray_max_y:
+                    continue
+
                 d = ray_segment_intersection(ray_origin, ray_dir, seg_a, seg_b, closest_dist)
                 if d is not None and d < closest_dist:
                     closest_dist = d

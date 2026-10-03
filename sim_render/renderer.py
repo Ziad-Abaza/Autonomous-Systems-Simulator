@@ -52,10 +52,18 @@ class SimulationRenderer3D:
         self.mesh_car_cabin: Optional[GLMesh] = None
         self.mesh_wheel: Optional[GLMesh] = None
         self.mesh_obstacle: Optional[GLMesh] = None
+        self.mesh_checkpoints: Optional[GLMesh] = None
 
         # Debug Trajectory
         self.trajectory_history: List[Vec3] = []
         self.max_trajectory_pts = 300
+
+        # Persistent Dynamic Line Buffers (avoids per-frame GPU allocation)
+        self.dynamic_vbo_rays = self.ctx.buffer(reserve=128 * 6 * 4)  # up to 64 rays
+        self.dynamic_vao_rays = self.ctx.vertex_array(self.prog_line, [(self.dynamic_vbo_rays, '3f', 'in_position')])
+
+        self.dynamic_vbo_traj = self.ctx.buffer(reserve=self.max_trajectory_pts * 3 * 4)
+        self.dynamic_vao_traj = self.ctx.vertex_array(self.prog_line, [(self.dynamic_vbo_traj, '3f', 'in_position')])
 
         # Offscreen FBO for synthetic camera sensor
         self.offscreen_fbo: Optional[OffscreenFBO] = None
@@ -109,6 +117,36 @@ class SimulationRenderer3D:
             )
         else:
             self.mesh_barriers = None
+
+        # Static Checkpoint Gates Mesh
+        if self.mesh_checkpoints:
+            self.mesh_checkpoints.release()
+            self.mesh_checkpoints = None
+
+        if track.checkpoints:
+            gate_lines = []
+            for cp in track.checkpoints:
+                gl = cp['gate_left']
+                gr = cp['gate_right']
+                z = cp['pos'].z
+                # Base line
+                gate_lines.append([gl.x, gl.y, z + 0.1])
+                gate_lines.append([gr.x, gr.y, z + 0.1])
+                # Arch top
+                gate_lines.append([gl.x, gl.y, z + 3.0])
+                gate_lines.append([gr.x, gr.y, z + 3.0])
+                # Left post
+                gate_lines.append([gl.x, gl.y, z + 0.1])
+                gate_lines.append([gl.x, gl.y, z + 3.0])
+                # Right post
+                gate_lines.append([gr.x, gr.y, z + 0.1])
+                gate_lines.append([gr.x, gr.y, z + 3.0])
+
+            if gate_lines:
+                arr = np.array(gate_lines, dtype=np.float32)
+                vbo_cp = self.ctx.buffer(arr.tobytes())
+                vao_cp = self.ctx.vertex_array(self.prog_line, [(vbo_cp, '3f', 'in_position')])
+                self.mesh_checkpoints = GLMesh(self.ctx, vao_cp, len(arr))
 
     def render_frame(
         self,
@@ -254,7 +292,7 @@ class SimulationRenderer3D:
                 self.mesh_wheel.render()
 
     def _render_lidar_rays(self, ray_visuals: List[Dict[str, Any]], z_height: float, vp: np.ndarray) -> None:
-        """Renders LiDAR range beams with color coding."""
+        """Renders LiDAR range beams with color coding using persistent dynamic VBO."""
         lines_pts = []
         for r in ray_visuals:
             o = r['origin']
@@ -266,58 +304,34 @@ class SimulationRenderer3D:
             return
 
         line_arr = np.array(lines_pts, dtype=np.float32)
-        vbo = self.ctx.buffer(line_arr.tobytes())
-        vao = self.ctx.vertex_array(self.prog_line, [(vbo, '3f', 'in_position')])
+        raw_bytes = line_arr.tobytes()
+        if len(raw_bytes) > self.dynamic_vbo_rays.size:
+            self.dynamic_vbo_rays.orphan(size=len(raw_bytes))
+        self.dynamic_vbo_rays.write(raw_bytes)
 
         self.prog_line['u_mvp'].write(vp.T.tobytes())
         self.prog_line['u_color'].value = (0.1, 1.0, 0.2, 0.8)  # Neon green LiDAR
-        vao.render(mode=moderngl.LINES)
-        vao.release()
-        vbo.release()
+        self.dynamic_vao_rays.render(mode=moderngl.LINES, vertices=len(lines_pts))
 
     def _render_trajectory(self, vp: np.ndarray) -> None:
+        if len(self.trajectory_history) < 2:
+            return
         pts = [[p.x, p.y, p.z] for p in self.trajectory_history]
         line_arr = np.array(pts, dtype=np.float32)
-        vbo = self.ctx.buffer(line_arr.tobytes())
-        vao = self.ctx.vertex_array(self.prog_line, [(vbo, '3f', 'in_position')])
+        raw_bytes = line_arr.tobytes()
+        if len(raw_bytes) > self.dynamic_vbo_traj.size:
+            self.dynamic_vbo_traj.orphan(size=len(raw_bytes))
+        self.dynamic_vbo_traj.write(raw_bytes)
 
         self.prog_line['u_mvp'].write(vp.T.tobytes())
         self.prog_line['u_color'].value = (1.0, 0.85, 0.0, 0.9)  # Golden trajectory
-        vao.render(mode=moderngl.LINE_STRIP)
-        vao.release()
-        vbo.release()
+        self.dynamic_vao_traj.render(mode=moderngl.LINE_STRIP, vertices=len(pts))
 
     def _render_checkpoints(self, checkpoints: List[Dict[str, Any]], current_idx: int, vp: np.ndarray) -> None:
-        gate_lines = []
-        for cp in checkpoints:
-            gl = cp['gate_left']
-            gr = cp['gate_right']
-            z = cp['pos'].z
-            # Base line
-            gate_lines.append([gl.x, gl.y, z + 0.1])
-            gate_lines.append([gr.x, gr.y, z + 0.1])
-            # Arch top
-            gate_lines.append([gl.x, gl.y, z + 3.0])
-            gate_lines.append([gr.x, gr.y, z + 3.0])
-            # Left post
-            gate_lines.append([gl.x, gl.y, z + 0.1])
-            gate_lines.append([gl.x, gl.y, z + 3.0])
-            # Right post
-            gate_lines.append([gr.x, gr.y, z + 0.1])
-            gate_lines.append([gr.x, gr.y, z + 3.0])
-
-        if not gate_lines:
-            return
-
-        arr = np.array(gate_lines, dtype=np.float32)
-        vbo = self.ctx.buffer(arr.tobytes())
-        vao = self.ctx.vertex_array(self.prog_line, [(vbo, '3f', 'in_position')])
-
-        self.prog_line['u_mvp'].write(vp.T.tobytes())
-        self.prog_line['u_color'].value = (0.2, 0.8, 1.0, 0.6)  # Cyan checkpoints
-        vao.render(mode=moderngl.LINES)
-        vao.release()
-        vbo.release()
+        if self.mesh_checkpoints:
+            self.prog_line['u_mvp'].write(vp.T.tobytes())
+            self.prog_line['u_color'].value = (0.2, 0.8, 1.0, 0.6)  # Cyan checkpoints
+            self.mesh_checkpoints.render(mode=moderngl.LINES)
 
     def _create_transform_matrix(self, x: float, y: float, z: float, yaw: float) -> np.ndarray:
         cos_y = math.cos(yaw)

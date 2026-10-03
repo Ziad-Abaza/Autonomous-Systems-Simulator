@@ -34,10 +34,26 @@ class VehicleCollisionChecker:
         boundary_segments: List[Tuple[Vec2, Vec2]]
     ) -> CollisionResult:
         obb = vehicle.get_obb()
-        corners = obb.get_corners()
+        c = obb.center
+        # Bounding radius + safety margin
+        r = max(obb.half_length, obb.half_width) + 0.5
+        min_x = c.x - r
+        max_x = c.x + r
+        min_y = c.y - r
+        max_y = c.y + r
 
-        # Check vehicle OBB edges against all boundary segments
+        # Check only boundary segments whose AABB overlaps vehicle AABB
         for seg_a, seg_b in boundary_segments:
+            seg_min_x = seg_a.x if seg_a.x < seg_b.x else seg_b.x
+            seg_max_x = seg_a.x if seg_a.x > seg_b.x else seg_b.x
+            if seg_max_x < min_x or seg_min_x > max_x:
+                continue
+
+            seg_min_y = seg_a.y if seg_a.y < seg_b.y else seg_b.y
+            seg_max_y = seg_a.y if seg_a.y > seg_b.y else seg_b.y
+            if seg_max_y < min_y or seg_min_y > max_y:
+                continue
+
             if obb.intersects_segment(seg_a, seg_b):
                 vehicle.state.is_colliding = True
                 return CollisionResult(

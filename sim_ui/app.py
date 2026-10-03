@@ -10,6 +10,12 @@ import os
 import time
 import math
 from typing import Optional, Dict, Any, Tuple
+
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+
 import pygame
 import numpy as np
 import moderngl
@@ -109,47 +115,51 @@ class SimulationStudioApp:
         if not hasattr(self, 'offscreen_fbo') or self.offscreen_fbo is None:
             return None
 
-        self.offscreen_fbo.bind()
-        # Save camera state
+        # Only execute offscreen render pass if camera observations are enabled
+        if not self.env.observation_schema.include_camera_rgb:
+            return None
+
         old_cam_pos = self.renderer.camera.pos
         old_cam_target = self.renderer.camera.target
         old_aspect = self.renderer.camera.aspect_ratio
 
-        # Set onboard pose
-        st = self.env.vehicle.state
-        cos_y = math.cos(st.yaw)
-        sin_y = math.sin(st.yaw)
-        cam_x = st.pos.x + cos_y * camera_sensor.local_pos.x - sin_y * camera_sensor.local_pos.y
-        cam_y = st.pos.y + sin_y * camera_sensor.local_pos.x + cos_y * camera_sensor.local_pos.y
-        cam_z = st.pos.z + camera_sensor.local_pos.z
+        try:
+            self.offscreen_fbo.bind()
+            st = self.env.vehicle.state
+            cos_y = math.cos(st.yaw)
+            sin_y = math.sin(st.yaw)
+            cam_x = st.pos.x + cos_y * camera_sensor.local_pos.x - sin_y * camera_sensor.local_pos.y
+            cam_y = st.pos.y + sin_y * camera_sensor.local_pos.x + cos_y * camera_sensor.local_pos.y
+            cam_z = st.pos.z + camera_sensor.local_pos.z
 
-        self.renderer.camera.pos = Vec3(cam_x, cam_y, cam_z)
-        self.renderer.camera.target = Vec3(cam_x + cos_y * 20.0, cam_y + sin_y * 20.0, cam_z + math.sin(camera_sensor.local_pitch) * 20.0)
-        self.renderer.camera.aspect_ratio = float(camera_sensor.width) / float(camera_sensor.height)
+            self.renderer.camera.pos = Vec3(cam_x, cam_y, cam_z)
+            self.renderer.camera.target = Vec3(cam_x + cos_y * 20.0, cam_y + sin_y * 20.0, cam_z + math.sin(camera_sensor.local_pitch) * 20.0)
+            self.renderer.camera.aspect_ratio = float(camera_sensor.width) / float(camera_sensor.height)
 
-        # Render 3D scene from vehicle camera
-        self.renderer.render_frame(
-            vehicle=self.env.vehicle,
-            track=self.env.track,
-            obstacles=self.env.obstacles,
-            sensors=self.env.sensors,
-            checkpoints=[],
-            current_cp_idx=0,
-            viewport_width=camera_sensor.width,
-            viewport_height=camera_sensor.height,
-            show_lidar_rays=False,
-            show_trajectory=False,
-            show_checkpoints=False
-        )
+            # Render 3D scene from vehicle camera
+            self.renderer.render_frame(
+                vehicle=self.env.vehicle,
+                track=self.env.track,
+                obstacles=self.env.obstacles,
+                sensors=self.env.sensors,
+                checkpoints=[],
+                current_cp_idx=0,
+                viewport_width=camera_sensor.width,
+                viewport_height=camera_sensor.height,
+                show_lidar_rays=False,
+                show_trajectory=False,
+                show_checkpoints=False
+            )
 
-        img = self.offscreen_fbo.read_rgb()
-
-        # Restore main camera
-        self.renderer.camera.pos = old_cam_pos
-        self.renderer.camera.target = old_cam_target
-        self.renderer.camera.aspect_ratio = old_aspect
-
-        return img
+            img = self.offscreen_fbo.read_rgb()
+            return img
+        finally:
+            # ALWAYS restore main window default framebuffer and viewport!
+            self.gl_ctx.screen.use()
+            self.gl_ctx.viewport = (0, 0, self.width, self.height)
+            self.renderer.camera.pos = old_cam_pos
+            self.renderer.camera.target = old_cam_target
+            self.renderer.camera.aspect_ratio = old_aspect
 
     def run(self) -> None:
         """Main simulation execution loop."""
@@ -343,6 +353,9 @@ class SimulationStudioApp:
 
     def _render(self) -> None:
         """Renders 3D scene followed by 2D HUD overlay."""
+        self.gl_ctx.screen.use()
+        self.gl_ctx.viewport = (0, 0, self.width, self.height)
+
         # 1. Render 3D OpenGL viewport
         self.renderer.render_frame(
             vehicle=self.env.vehicle,
