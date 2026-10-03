@@ -78,3 +78,5 @@ last_episode.json
 recordings/
 *.rec.json
 *.rec.json.gz
+
+.superpowers/
