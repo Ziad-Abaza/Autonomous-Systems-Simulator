@@ -150,6 +150,11 @@ class PPORunner:
         self.rewards_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
         self.dones_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
         self.values_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
+        # terminated-only flags + V(final_obs) at truncation: time-limit
+        # truncations bootstrap the value of the final observation instead of
+        # being treated as terminal (standard episodic-MDP handling).
+        self.terms_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
+        self.final_values_buf = torch.zeros(self.num_steps, dtype=torch.float32, device=self.device)
 
         # Env-swap / deterministic reset bookkeeping. _envs_dirty forces a
         # fresh re-initialization (reset with derived seeds) at the start of
@@ -157,7 +162,7 @@ class PPORunner:
         # streams never repeat across curriculum stages.
         self._envs_dirty = True
         self._env_epoch = 0
-        self._reset_counts = [0] * len(self.envs)
+        self._reset_counts = [1] * len(self.envs)
 
         # Resume from a previous checkpoint if requested
         if resume_checkpoint:
@@ -197,7 +202,7 @@ class PPORunner:
         self.envs = new_envs
         self.env = new_envs[0]
         self._env_epoch += 1
-        self._reset_counts = [0] * len(new_envs)
+        self._reset_counts = [1] * len(new_envs)
         self._envs_dirty = True
 
     def _next_reset_seed(self, env_idx: int) -> int:
@@ -275,6 +280,16 @@ class PPORunner:
 
                 self.rewards_buf[step] = float(reward)
                 done = terminated or truncated
+                self.terms_buf[step] = 1.0 if terminated else 0.0
+                if truncated and not terminated:
+                    # Truncation is not terminal: bootstrap V(final_obs) so the
+                    # time limit does not fake a death. Computed BEFORE reset.
+                    with torch.no_grad():
+                        self.final_values_buf[step] = self.agent.get_value(
+                            torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                        ).squeeze()
+                else:
+                    self.final_values_buf[step] = 0.0
                 next_done_tensors[env_idx] = torch.tensor(1.0 if done else 0.0, dtype=torch.float32, device=self.device)
                 next_obs_tensors[env_idx] = torch.tensor(next_obs, dtype=torch.float32, device=self.device)
 
@@ -299,7 +314,9 @@ class PPORunner:
                     ep_stats = {
                         'env_idx': env_idx,
                         'return': float(ep_return[env_idx]),
-                        'length': int(ep_len[env_idx]),
+                        # env-reported step count is authoritative (single
+                        # source of truth; guards against counter drift)
+                        'length': int(step_info.get('step', ep_len[env_idx])),
                         'termination_reason': step_info.get('termination_reason', ''),
                         'mean_lateral_error': float(np.mean(ep_lat_errors[env_idx])) if ep_lat_errors[env_idx] else 0.0,
                         'mean_speed': float(np.mean(ep_speeds[env_idx])) if ep_speeds[env_idx] else 0.0,
@@ -333,19 +350,32 @@ class PPORunner:
             with torch.no_grad():
                 advantages = torch.zeros_like(self.rewards_buf)
                 for e in range(num_envs):
-                    seg = slice(e * spe, (e + 1) * spe)
-                    next_value = self.agent.get_value(next_obs_tensors[e].unsqueeze(0)).reshape(1, -1)
                     lastgaelam = 0.0
                     for t in reversed(range(spe)):
                         idx = e * spe + t
                         if t == spe - 1:
-                            nextnonterminal = 1.0 - next_done_tensors[e]
-                            nextvalues = next_value
+                            # Segment boundary: carry stops if the step ended an
+                            # episode; value bootstrap uses V(next_obs) only when
+                            # the episode is still running.
+                            cnon = 1.0 - next_done_tensors[e]
+                            if next_done_tensors[e].item() == 0.0:
+                                nextvalues = self.agent.get_value(
+                                    next_obs_tensors[e].unsqueeze(0)).reshape(1, -1)
+                            else:
+                                nextvalues = self.final_values_buf[idx]
                         else:
-                            nextnonterminal = 1.0 - self.dones_buf[idx + 1]
-                            nextvalues = self.values_buf[idx + 1]
-                        delta = self.rewards_buf[idx] + self.gamma * nextvalues * nextnonterminal - self.values_buf[idx]
-                        advantages[idx] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
+                            # Carry stops at any episode end (terminated or
+                            # truncated); value bootstrap uses V(s_{t+1}) for
+                            # continuing steps, V(final_obs) for truncations,
+                            # and 0 for true termination (via vnon below).
+                            cnon = 1.0 - self.dones_buf[idx + 1]
+                            if self.dones_buf[idx + 1].item() == 0.0:
+                                nextvalues = self.values_buf[idx + 1]
+                            else:
+                                nextvalues = self.final_values_buf[idx]
+                        vnon = 1.0 - self.terms_buf[idx]
+                        delta = self.rewards_buf[idx] + self.gamma * nextvalues * vnon - self.values_buf[idx]
+                        advantages[idx] = lastgaelam = delta + self.gamma * self.gae_lambda * cnon * lastgaelam
                 returns = advantages + self.values_buf
 
             # 3. PPO Optimization Epochs

@@ -1,0 +1,415 @@
+"""
+Batch Scheduler + Local Worker Pool.
+
+Phase 4 could expand a batch into run specs but had no execution engine.
+The BatchScheduler owns a queue of jobs and a pool of local workers; each
+worker executes at most one run at a time through the existing
+LocalTrainingOrchestrator (trainer subprocess = process isolation,
+run-dir isolation, deterministic seeds — unchanged).
+
+    BatchScheduler
+        └── WorkerPool (N local workers, capacity-limited)
+                └── LocalTrainingOrchestrator
+                        └── external trainer subprocess
+
+Persistence (per experiment):
+    <experiment_dir>/batches/<batch_id>/batch.json       # live state, updated on transitions
+    <experiment_dir>/batches/<batch_id>/batch_result.json # final immutable result
+
+One failed run never terminates the batch — failures are isolated per job;
+retry policy decides whether a new attempt is queued.
+"""
+
+from __future__ import annotations
+import json
+import os
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional
+
+from sim_experiment.manifest import ExperimentManifest
+from sim_experiment.run import RunManager, RunStatus
+from sim_experiment.orchestrator import LocalTrainingOrchestrator
+from sim_experiment.batch import expand_run_specs
+from sim_env.scenario_designer import ScenarioDefinition
+
+
+class WorkerState:
+    IDLE = "IDLE"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    FAILED = "FAILED"
+    STOPPING = "STOPPING"
+    OFFLINE = "OFFLINE"
+
+
+class JobStatus:
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+    TERMINAL = (COMPLETED, FAILED, CANCELLED)
+
+
+# Infrastructure-level failures that may succeed on retry.
+RETRYABLE_ERROR_TYPES = frozenset({
+    "trainer_crash", "trainer_exception", "launch_failure",
+    "timeout", "worker_crash",
+})
+# Configuration/determinism errors — retrying can never help.
+NON_RETRYABLE_ERROR_TYPES = frozenset({
+    "invalid_contract", "invalid_curriculum", "invalid_experiment",
+    "unsupported_algorithm", "curriculum_mismatch",
+    "curriculum_state_missing", "protocol_version_mismatch",
+    "launch_rejected", "incompatible_environment",
+})
+
+
+def is_retryable_error(error: Optional[Dict[str, Any]]) -> bool:
+    """Classifies a run error dict as retryable (transient) or not."""
+    if not error:
+        return False
+    etype = error.get("type", "")
+    if etype in NON_RETRYABLE_ERROR_TYPES:
+        return False
+    if etype in RETRYABLE_ERROR_TYPES:
+        return True
+    return False  # unknown types are not retried (conservative)
+
+
+@dataclass
+class RetryPolicy:
+    max_retries: int = 0
+    retryable_error_types: frozenset = RETRYABLE_ERROR_TYPES
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"max_retries": self.max_retries,
+                "retryable_error_types": sorted(self.retryable_error_types)}
+
+
+@dataclass
+class Worker:
+    """One local execution slot; executes at most one run at a time."""
+    worker_id: str
+    capabilities: Dict[str, Any] = field(default_factory=dict)
+    status: str = WorkerState.IDLE
+    current_run_id: Optional[str] = None
+    current_job_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "worker_id": self.worker_id,
+            "capabilities": self.capabilities,
+            "status": self.status,
+            "current_run_id": self.current_run_id,
+            "current_job_id": self.current_job_id,
+            "metadata": self.metadata,
+        }
+
+
+class BatchScheduler:
+    """Queues run jobs across a fixed pool of local workers."""
+
+    def __init__(
+        self,
+        experiments_root: str = "experiments",
+        max_workers: int = 2,
+        orchestrator: Optional[LocalTrainingOrchestrator] = None,
+    ):
+        if max_workers < 1:
+            raise ValueError("max_workers must be >= 1")
+        self.experiments_root = os.path.abspath(experiments_root)
+        self.orch = orchestrator or LocalTrainingOrchestrator(
+            experiments_root=self.experiments_root)
+        self.run_manager = RunManager()
+        self.workers: List[Worker] = [
+            Worker(
+                worker_id=f"worker_{i}",
+                capabilities={
+                    "type": "local",
+                    "trainers": sorted(LocalTrainingOrchestrator.trainer_modules()),
+                    "max_envs_per_run": None,   # bounded by manifest num_envs
+                },
+            )
+            for i in range(max_workers)
+        ]
+        self._batches: Dict[str, Dict[str, Any]] = {}
+
+    # ------------------------------------------------------------ batch CRUD
+
+    def create_batch(
+        self,
+        manifest: ExperimentManifest,
+        experiment_dir: str,
+        specs: Optional[List[Dict[str, Any]]] = None,
+        seeds: Optional[List[int]] = None,
+        scenario_ids: Optional[List[str]] = None,
+        trainer: str = "ppo",
+        env_mode: str = "inprocess",
+        retry_policy: Optional[RetryPolicy] = None,
+    ) -> Dict[str, Any]:
+        """
+        Creates a persistent batch of queued jobs. `specs` may carry per-job
+        overrides: {"seed", "scenario_id", "algorithm_config"}.
+        """
+        if specs is None:
+            specs = expand_run_specs(manifest, seeds=seeds, scenario_ids=scenario_ids)
+        if not specs:
+            raise ValueError("Batch requires at least one run spec")
+
+        experiment_dir = os.path.abspath(experiment_dir)
+        batch_id = f"batch_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        batch_dir = os.path.join(experiment_dir, "batches", batch_id)
+        os.makedirs(batch_dir, exist_ok=True)
+
+        jobs = [
+            {
+                "job_id": f"{batch_id}_job{i}",
+                "index": i,
+                "spec": dict(spec),
+                "status": JobStatus.QUEUED,
+                "attempts": [],
+            }
+            for i, spec in enumerate(specs)
+        ]
+        batch = {
+            "batch_id": batch_id,
+            "experiment_id": manifest.experiment_id,
+            "trainer": trainer,
+            "env_mode": env_mode,
+            "retry_policy": (retry_policy or RetryPolicy()).to_dict(),
+            "created_at": round(time.time(), 4),
+            "jobs": jobs,
+        }
+        rec = {
+            "batch_id": batch_id,
+            "experiment_id": manifest.experiment_id,
+            "experiment_dir": experiment_dir,
+            "batch_dir": batch_dir,
+            "manifest": manifest,
+            "retry_policy": retry_policy or RetryPolicy(),
+            "data": batch,
+        }
+        self._batches[batch_id] = rec
+        self._persist(rec)
+        return {"batch_id": batch_id, "batch_path": batch_dir, "jobs": len(jobs)}
+
+    def status(self, batch_id: str) -> Dict[str, Any]:
+        data = self._batch(batch_id)["data"]
+        counts = {s: 0 for s in (JobStatus.QUEUED, JobStatus.RUNNING,
+                                 JobStatus.COMPLETED, JobStatus.FAILED,
+                                 JobStatus.CANCELLED)}
+        for j in data["jobs"]:
+            counts[j["status"]] = counts.get(j["status"], 0) + 1
+        return {
+            "batch_id": batch_id,
+            "experiment_id": data["experiment_id"],
+            "total": len(data["jobs"]),
+            "queued": counts.get(JobStatus.QUEUED, 0),
+            "running": counts.get(JobStatus.RUNNING, 0),
+            "completed": counts.get(JobStatus.COMPLETED, 0),
+            "failed": counts.get(JobStatus.FAILED, 0),
+            "cancelled": counts.get(JobStatus.CANCELLED, 0),
+            "finished": sum(counts[s] for s in JobStatus.TERMINAL),
+        }
+
+    # ------------------------------------------------------------ execution
+
+    def tick(self, batch_id: Optional[str] = None) -> None:
+        """One scheduling round: dispatch queued jobs, poll running ones."""
+        for rec in self._batches.values():
+            if batch_id and rec["batch_id"] != batch_id:
+                continue
+            self._dispatch(rec)
+            self._poll_jobs(rec)
+            self._persist(rec)
+
+    def run_until_complete(
+        self, batch_id: str, timeout_s: float = 600.0, poll_s: float = 0.5
+    ) -> Dict[str, Any]:
+        """Drives the batch until all jobs are terminal; writes batch_result.json."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            self.tick(batch_id)
+            st = self.status(batch_id)
+            if st["finished"] >= st["total"]:
+                return self._finalize_batch(self._batches[batch_id], "completed")
+            time.sleep(poll_s)
+        raise TimeoutError(f"Batch {batch_id} did not finish in {timeout_s}s")
+
+    def cancel_batch(self, batch_id: str) -> Dict[str, Any]:
+        """Cancels running jobs via the orchestrator; marks queued jobs cancelled."""
+        rec = self._batch(batch_id)
+        exp_dir = rec["experiment_dir"]
+        for job in rec["data"]["jobs"]:
+            if job["status"] == JobStatus.RUNNING:
+                for attempt in job["attempts"]:
+                    if attempt["status"] == "RUNNING" and attempt.get("run_id"):
+                        self.orch.cancel(exp_dir, attempt["run_id"])
+                        attempt["status"] = "CANCELLED"
+                job["status"] = JobStatus.CANCELLED
+            elif job["status"] == JobStatus.QUEUED:
+                job["status"] = JobStatus.CANCELLED
+        for w in self.workers:
+            if w.current_job_id and any(
+                j["job_id"] == w.current_job_id and j["status"] == JobStatus.CANCELLED
+                for j in rec["data"]["jobs"]
+            ):
+                w.status = WorkerState.IDLE
+                w.current_run_id = None
+                w.current_job_id = None
+        self._persist(rec)
+        return self._finalize_batch(rec, "cancelled")
+
+    # ------------------------------------------------------------ internals
+
+    def _batch(self, batch_id: str) -> Dict[str, Any]:
+        if batch_id not in self._batches:
+            raise KeyError(f"Unknown batch: {batch_id}")
+        return self._batches[batch_id]
+
+    def _idle_worker(self, trainer: str) -> Optional[Worker]:
+        for w in self.workers:
+            if w.status == WorkerState.IDLE and trainer in w.capabilities.get("trainers", []):
+                return w
+        return None
+
+    def _resolve_scenario(self, rec: Dict[str, Any], spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        sid = spec.get("scenario_id")
+        manifest = rec["manifest"]
+        if not sid or sid == manifest.scenario_id:
+            return None
+        scen = ScenarioDefinition.get_standard_scenarios().get(sid)
+        if scen is None:
+            raise ValueError(f"Batch spec references unknown scenario_id '{sid}'")
+        return scen.to_dict()
+
+    def _dispatch(self, rec: Dict[str, Any]) -> None:
+        data = rec["data"]
+        for job in data["jobs"]:
+            if job["status"] != JobStatus.QUEUED:
+                continue
+            worker = self._idle_worker(data["trainer"])
+            if worker is None:
+                return
+            worker.status = WorkerState.STARTING
+            attempt = {
+                "attempt": len(job["attempts"]) + 1,
+                "started_at": round(time.time(), 4),
+                "status": "STARTING",
+                "run_id": None,
+            }
+            try:
+                run_id = self.orch.launch(
+                    rec["manifest"], rec["experiment_dir"],
+                    trainer=data["trainer"], env_mode=data["env_mode"],
+                    run_overrides={
+                        "seed": job["spec"].get("seed"),
+                        "scenario_dict": self._resolve_scenario(rec, job["spec"]),
+                        "algorithm_config": job["spec"].get("algorithm_config"),
+                    },
+                )
+            except Exception as e:
+                worker.status = WorkerState.IDLE
+                attempt["status"] = "FAILED"
+                attempt["error"] = {"type": "launch_rejected", "message": str(e)}
+                job["attempts"].append(attempt)
+                job["status"] = JobStatus.FAILED  # config errors: no retry
+                continue
+            attempt["run_id"] = run_id
+            attempt["status"] = "RUNNING"
+            job["attempts"].append(attempt)
+            job["status"] = JobStatus.RUNNING
+            worker.status = WorkerState.RUNNING
+            worker.current_run_id = run_id
+            worker.current_job_id = job["job_id"]
+
+    def _poll_jobs(self, rec: Dict[str, Any]) -> None:
+        data = rec["data"]
+        policy = rec["retry_policy"]
+        for job in data["jobs"]:
+            if job["status"] != JobStatus.RUNNING:
+                continue
+            attempt = job["attempts"][-1]
+            summary = self.orch.poll(rec["experiment_dir"], attempt["run_id"])
+            if summary["status"] not in RunStatus.TERMINAL:
+                continue
+            attempt["status"] = summary["status"]
+            attempt["ended_at"] = round(time.time(), 4)
+            attempt["error"] = summary.get("error")
+            self._release_worker(job["job_id"])
+
+            failed = summary["status"] in (RunStatus.FAILED, RunStatus.INTERRUPTED)
+            retryable = failed and is_retryable_error(summary.get("error"))
+            if retryable and len(job["attempts"]) <= policy.max_retries:
+                job["status"] = JobStatus.QUEUED   # re-queue a fresh attempt
+            else:
+                job["status"] = summary["status"]
+
+    def _release_worker(self, job_id: str) -> None:
+        for w in self.workers:
+            if w.current_job_id == job_id:
+                w.status = WorkerState.IDLE
+                w.current_run_id = None
+                w.current_job_id = None
+
+    def _persist(self, rec: Dict[str, Any]) -> None:
+        path = os.path.join(rec["batch_dir"], "batch.json")
+        tmp = path + ".tmp"
+        data = dict(rec["data"])
+        data["workers"] = [w.to_dict() for w in self.workers]
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+
+    def _finalize_batch(self, rec: Dict[str, Any], batch_status: str) -> Dict[str, Any]:
+        """Writes the immutable batch_result.json for a finished batch."""
+        data = rec["data"]
+        exp_dir = rec["experiment_dir"]
+        runs: List[Dict[str, Any]] = []
+        for job in data["jobs"]:
+            run_ids = [a["run_id"] for a in job["attempts"] if a.get("run_id")]
+            entry = {
+                "job_id": job["job_id"],
+                "spec": job["spec"],
+                "status": job["status"],
+                "run_ids": run_ids,
+                "run_id": run_ids[-1] if run_ids else None,
+                "attempts": job["attempts"],
+                "retries": max(0, len(job["attempts"]) - 1),
+            }
+            # metrics/eval summary + artifact refs from the final run
+            if entry["run_id"]:
+                try:
+                    run = self.run_manager.load_run(exp_dir, entry["run_id"])
+                    entry["metrics"] = dict(run.latest_metrics)
+                    entry["timesteps"] = run.current_timestep
+                    entry["episode_count"] = run.episode_count
+                    entry["artifacts"] = {
+                        "checkpoints": list(run.checkpoints),
+                        "evaluations": list(run.evaluation_results),
+                        "replays": list(run.replays),
+                    }
+                except OSError:
+                    pass
+            runs.append(entry)
+
+        result = {
+            "batch_id": data["batch_id"],
+            "experiment_id": data["experiment_id"],
+            "trainer": data["trainer"],
+            "env_mode": data["env_mode"],
+            "status": batch_status,
+            "created_at": data["created_at"],
+            "finished_at": round(time.time(), 4),
+            "duration_s": round(time.time() - data["created_at"], 3),
+            "runs": runs,
+        }
+        out_path = os.path.join(rec["batch_dir"], "batch_result.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+        return result

@@ -95,7 +95,11 @@ class EnvironmentValidator:
     ) -> ValidationReport:
         report = ValidationReport()
         entities = entities or []
-        available_sensors = available_sensors or ["vehicle_state", "lidar_rays", "rgb_camera", "imu"]
+        # Sensor availability is derived from the agent's declared bindings —
+        # never from a hardcoded list. Callers may still pass an explicit set
+        # (e.g. sensors actually attached at runtime).
+        if available_sensors is None:
+            available_sensors = list(agent.sensor_names) if agent is not None else []
 
         # 1. Agent Existence & Integrity
         if agent is None:

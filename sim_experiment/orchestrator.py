@@ -29,10 +29,13 @@ from sim_experiment.metrics import MetricsReader
 from sim_experiment.artifacts import ArtifactRegistry
 from sim_experiment.trainer_contract import build_contract, validate_contract
 from sim_experiment.curriculum_runtime import validate_curriculum
+from sim_experiment.capabilities import check_compatibility
 from sim_experiment.headless import HeadlessSimProcessPool
 
 TRAINER_MODULES = {
     "ppo": "sim_experiment.trainers.ppo_trainer",
+    "sac": "sim_experiment.trainers.sac_trainer",
+    "dqn": "sim_experiment.trainers.dqn_trainer",
     "dummy": "sim_experiment.trainers.dummy_trainer",
 }
 
@@ -51,6 +54,11 @@ class LocalTrainingOrchestrator:
         self.run_manager = RunManager()
         self._procs: Dict[str, subprocess.Popen] = {}          # run_dir -> Popen
         self._sim_pools: Dict[str, HeadlessSimProcessPool] = {}  # run_dir -> pool
+
+    @staticmethod
+    def trainer_modules() -> Dict[str, str]:
+        """Registered trainer short-name -> module mapping."""
+        return dict(TRAINER_MODULES)
 
     # ------------------------------------------------------------ validation
 
@@ -81,13 +89,29 @@ class LocalTrainingOrchestrator:
         env_mode: str = "inprocess",
         run_id: Optional[str] = None,
         resume_from: Optional[Dict[str, Any]] = None,
+        run_overrides: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Creates a run, materializes the trainer contract, launches the
         external trainer subprocess, and returns run_id.
+
+        `run_overrides` applies per-run (never per-experiment) variations —
+        used by the batch scheduler: {"seed", "scenario_dict",
+        "algorithm_config"}. The manifest itself is never mutated.
         """
+        run_overrides = dict(run_overrides or {})
+        run_seed = int(run_overrides.get("seed", manifest.random_seed))
         module = self._resolve_trainer(trainer)
         experiment_dir = os.path.abspath(experiment_dir)
+
+        # Algorithm/environment compatibility is checked BEFORE any process
+        # launch — incompatible combinations are configuration errors.
+        compat_errors = check_compatibility(manifest, trainer)
+        if compat_errors:
+            raise ValueError(
+                "Incompatible experiment/trainer combination: "
+                + "; ".join(compat_errors)
+            )
 
         # Curriculum is a deterministic configuration surface: invalid
         # definitions and unsupported env modes fail before any process or
@@ -110,7 +134,7 @@ class LocalTrainingOrchestrator:
         if run_id is None:
             run = rmg.create_run(
                 experiment_dir,
-                seed=manifest.random_seed,
+                seed=run_seed,
                 experiment_id=manifest.experiment_id,
                 trainer=module,
                 env_mode=env_mode,
@@ -131,6 +155,17 @@ class LocalTrainingOrchestrator:
             manifest, experiment_dir, rd, run_id,
             env_mode=env_mode, tcp_ports=tcp_ports, resume=resume_from,
         )
+        # Per-run overrides (batch scheduler): seed / scenario / alg config.
+        contract["seed"] = run_seed
+        if run_overrides.get("scenario_dict"):
+            contract["scenario"] = run_overrides["scenario_dict"]
+            contract["scenario_id"] = run_overrides["scenario_dict"].get(
+                "scenario_id", contract["scenario_id"])
+        if run_overrides.get("algorithm_config"):
+            contract["training"]["algorithm_config"] = {
+                **contract["training"].get("algorithm_config", {}),
+                **run_overrides["algorithm_config"],
+            }
         errors = validate_contract(contract)
         if errors:
             self._cleanup_sim_pool(rd)

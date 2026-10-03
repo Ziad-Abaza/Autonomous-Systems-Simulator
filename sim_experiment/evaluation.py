@@ -96,6 +96,8 @@ def evaluate_policy(
             head_errs.append(abs(float(info.get("heading_error", 0.0))))
             speeds.append(float(info.get("speed", 0.0)))
             if terminated or truncated:
+                # env-reported step count is authoritative for episode length
+                ep_len = int(info.get("step", ep_len))
                 reason = str(info.get("termination_reason", "unknown"))
                 collided = "collision" in reason or bool(info.get("is_colliding", False))
                 off_road = "off_road" in reason
@@ -148,6 +150,12 @@ def evaluate_policy(
     return result
 
 
+def _obs_vec(obs, obs_dim: int):
+    if isinstance(obs, dict):
+        obs = obs.get("vector", np.zeros(obs_dim, dtype=np.float32))
+    return np.asarray(obs, dtype=np.float32)
+
+
 def make_policy_from_checkpoint(
     checkpoint_path: str,
     algorithm: str = "ppo",
@@ -155,40 +163,69 @@ def make_policy_from_checkpoint(
 ) -> Callable[[Any], Any]:
     """
     Builds a policy callable from an opaque checkpoint artifact.
-    Currently supports the PPO ActorCritic checkpoint format.
+    Supports the PPO, SAC, and DQN checkpoint formats.
     """
-    if algorithm != "ppo":
-        raise ValueError(f"No checkpoint adapter for algorithm: {algorithm!r}")
-
     import torch
-    from sim_client.agents.ppo_baseline import ActorCritic
 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     obs_dim = int(ckpt["obs_dim"])
-    act_dim = int(ckpt["act_dim"])
-    net = ActorCritic(obs_dim, act_dim)
-    net.load_state_dict(ckpt["model_state_dict"])
-    net.eval()
 
-    def _vec(obs):
-        if isinstance(obs, dict):
-            obs = obs.get("vector", np.zeros(obs_dim, dtype=np.float32))
-        return np.asarray(obs, dtype=np.float32)
+    if algorithm == "ppo":
+        from sim_client.agents.ppo_baseline import ActorCritic
+        act_dim = int(ckpt["act_dim"])
+        net = ActorCritic(obs_dim, act_dim)
+        net.load_state_dict(ckpt["model_state_dict"])
+        net.eval()
 
-    def policy(obs):
-        x = torch.tensor(_vec(obs), dtype=torch.float32).unsqueeze(0)
-        with torch.no_grad():
-            if deterministic:
-                feat = net.actor_backbone(x)
-                mean = net.actor_mean(feat)
-                a = mean.squeeze(0).cpu().numpy()
-            else:
-                a, _, _, _ = net.get_action_and_value(x)
-                a = a.squeeze(0).cpu().numpy()
-        return [
-            float(np.clip(a[0], -1.0, 1.0)),
-            float(np.clip(a[1], 0.0, 1.0)),
-            float(np.clip(a[2], 0.0, 1.0)),
-        ]
+        def policy(obs):
+            x = torch.tensor(_obs_vec(obs, obs_dim), dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                if deterministic:
+                    feat = net.actor_backbone(x)
+                    mean = net.actor_mean(feat)
+                    a = mean.squeeze(0).cpu().numpy()
+                else:
+                    a, _, _, _ = net.get_action_and_value(x)
+                    a = a.squeeze(0).cpu().numpy()
+            return [
+                float(np.clip(a[0], -1.0, 1.0)),
+                float(np.clip(a[1], 0.0, 1.0)),
+                float(np.clip(a[2], 0.0, 1.0)),
+            ]
+        return policy
 
-    return policy
+    if algorithm == "sac":
+        from sim_client.agents.sac_baseline import SACActor
+        act_dim = int(ckpt["act_dim"])
+        actor = SACActor(obs_dim, act_dim)
+        actor.load_state_dict(ckpt["actor_state_dict"])
+        actor.eval()
+        low = np.asarray(ckpt.get("action_low", [-1.0, 0.0, 0.0]), dtype=np.float32)
+        high = np.asarray(ckpt.get("action_high", [1.0, 1.0, 1.0]), dtype=np.float32)
+
+        def policy(obs):
+            x = torch.tensor(_obs_vec(obs, obs_dim), dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                if deterministic:
+                    a = actor.deterministic(x).squeeze(0).cpu().numpy()
+                else:
+                    a, _ = actor.sample(x)
+                    a = a.squeeze(0).cpu().numpy()
+            return low + (a + 1.0) * 0.5 * (high - low)
+        return policy
+
+    if algorithm == "dqn":
+        from sim_client.agents.dqn_baseline import QNetwork
+        num_actions = int(ckpt["num_actions"])
+        net = QNetwork(obs_dim, num_actions)
+        net.load_state_dict(ckpt["q_state_dict"])
+        net.eval()
+
+        def policy(obs):
+            x = torch.tensor(_obs_vec(obs, obs_dim), dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                q_vals = net(x)
+            return int(q_vals.argmax(dim=1).item())
+        return policy
+
+    raise ValueError(f"No checkpoint adapter for algorithm: {algorithm!r}")

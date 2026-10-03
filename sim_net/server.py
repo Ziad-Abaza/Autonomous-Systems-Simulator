@@ -14,6 +14,9 @@ import numpy as np
 
 from sim_net.protocol import MessageType, ProtocolEncoder, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from sim_env.environment import SimulationEnvironment
+from sim_env.observation_contract import (
+    build_diagnostic_state, diagnostic_state_contract, channel_classification_map,
+)
 
 
 def _version_key(v: str) -> tuple:
@@ -222,6 +225,8 @@ class SimulationServer:
                 'reward_schema': reward_graph,
                 'termination_schema': term_rules,
                 'sensors': [s.to_dict() for s in self.env.sensors.sensors.values()],
+                'observation_field_classes': channel_classification_map(self.env.agent),
+                'diagnostic_fields': diagnostic_state_contract(),
                 'scenario': {
                     'name': self.env.scenario_def.name if self.env.scenario_def else self.env.scenario.name,
                     'weather': self.env.scenario_def.weather if self.env.scenario_def else self.env.scenario.weather,
@@ -251,15 +256,9 @@ class SimulationServer:
             }
 
         elif msg_type == MessageType.GET_STATE:
-            st = self.env.vehicle.state
-            return MessageType.STATE_ACK, {
-                'speed': float(st.speed),
-                'pos': [st.pos.x, st.pos.y, st.pos.z],
-                'yaw': float(st.yaw),
-                'sim_time': self.env.clock.sim_time,
-                'total_reward': self.env.reward_engine.total_accumulated_reward,
-                'reward_breakdown': self.env.reward_engine.last_breakdown,
-            }
+            # Payload keys come from the declared diagnostic contract —
+            # diagnostic fields are never agent observations.
+            return MessageType.STATE_ACK, build_diagnostic_state(self.env)
 
         return MessageType.ERROR, {'error': f"Unknown message type: {msg_type}"}
 
