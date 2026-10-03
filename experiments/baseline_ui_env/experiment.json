@@ -1,0 +1,21 @@
+{
+  "experiment_id": "exp_lane_keeping_01",
+  "name": "ppo_ui_baseline_oval",
+  "environment_name": "Proving Ground Circuit (UI-Authored)",
+  "scenario_id": "basic_lane_following",
+  "seed": 42,
+  "algorithm": "PPO",
+  "total_timesteps": 10240,
+  "rollout_steps": 1024,
+  "learning_rate": 0.0003,
+  "gamma": 0.99,
+  "gae_lambda": 0.95,
+  "clip_coef": 0.2,
+  "batch_size": 256,
+  "num_epochs": 4,
+  "eval_frequency_steps": 5000,
+  "eval_episodes": 5,
+  "checkpoint_frequency_steps": 10000,
+  "output_directory": "experiments/results",
+  "hyperparameters": {}
+}

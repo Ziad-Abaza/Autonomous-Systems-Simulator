@@ -1,5 +1,6 @@
 """
 Binary and JSON communication protocol between the Simulation Platform and External AI/RL models.
+Protocol Version 2.0 adds contract discovery, rich schema negotiation, and detailed termination reasons.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import numpy as np
 class MessageType:
     HANDSHAKE = "HANDSHAKE"
     HANDSHAKE_ACK = "HANDSHAKE_ACK"
+    DISCOVER_CONTRACT = "DISCOVER_CONTRACT"
+    CONTRACT_ACK = "CONTRACT_ACK"
     RESET = "RESET"
     RESET_ACK = "RESET_ACK"
     STEP = "STEP"
@@ -18,6 +21,9 @@ class MessageType:
     GET_STATE = "GET_STATE"
     STATE_ACK = "STATE_ACK"
     ERROR = "ERROR"
+
+
+PROTOCOL_VERSION = "2.0"
 
 
 class ProtocolEncoder:

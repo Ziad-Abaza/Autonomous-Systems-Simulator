@@ -148,6 +148,7 @@ class SimulationServer:
         if msg_type == MessageType.HANDSHAKE:
             # Return environment spec
             spec = {
+                'protocol_version': '2.0',
                 'action_space': self.env.action_config.to_dict(),
                 'observation_schema': self.env.observation_schema.to_dict(),
                 'vector_dim': self.env.observation_schema.compute_vector_dim(),
@@ -157,6 +158,46 @@ class SimulationServer:
                 'dt': self.env.clock.dt,
             }
             return MessageType.HANDSHAKE_ACK, spec
+
+        elif msg_type == MessageType.DISCOVER_CONTRACT:
+            # Full declarative contract discovery
+            if self.env.agent is not None:
+                act_schema = self.env.agent.action_space.export_schema()
+                obs_schema = self.env.agent.observation_space.export_schema()
+                reward_graph = self.env.agent.reward_function.export_graph()
+                term_rules = [r.to_dict() for r in self.env.agent.termination_rules.rules if r.enabled]
+            else:
+                act_schema = {
+                    'space_type': self.env.action_config.type,
+                    'num_channels': 3,
+                    'continuous_low': self.env.action_config.continuous_low,
+                    'continuous_high': self.env.action_config.continuous_high
+                }
+                obs_schema = {
+                    'vector_dimension': self.env.observation_schema.compute_vector_dim(),
+                    'flatten_vector': self.env.observation_schema.flatten_vector
+                }
+                reward_graph = {'weights': self.env.reward_engine.config.to_dict()}
+                term_rules = [{'rules': self.env.termination_engine.config.to_dict()}]
+
+            contract = {
+                'protocol_version': '2.0',
+                'environment_id': self.env.road_def.name,
+                'environment_version': getattr(self.env, 'environment_version', '1.0.0'),
+                'physics_hz': self.env.clock.physics_hz,
+                'dt': self.env.clock.dt,
+                'action_schema': act_schema,
+                'observation_schema': obs_schema,
+                'reward_schema': reward_graph,
+                'termination_schema': term_rules,
+                'sensors': [s.to_dict() for s in self.env.sensors.sensors.values()],
+                'scenario': {
+                    'name': self.env.scenario_def.name if self.env.scenario_def else self.env.scenario.name,
+                    'weather': self.env.scenario_def.weather if self.env.scenario_def else self.env.scenario.weather,
+                    'friction_mult': self.env.scenario_def.surface_friction_mult if self.env.scenario_def else self.env.scenario.surface_friction_mult
+                }
+            }
+            return MessageType.CONTRACT_ACK, contract
 
         elif msg_type == MessageType.RESET:
             seed = payload.get('seed', None)

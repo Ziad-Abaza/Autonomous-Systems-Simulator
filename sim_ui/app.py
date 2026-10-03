@@ -35,6 +35,8 @@ from sim_ui.inspector import EnvironmentInspector
 from sim_recorder.recorder import EpisodeRecorder
 from sim_recorder.replay import EpisodeReplayPlayer
 from sim_project.serializer import EnvironmentProject
+from sim_env.templates import EnvironmentTemplateManager
+from sim_env.export import TrainingExporter
 from sim_project.presets import (
     create_oval_circuit,
     create_serpentine_track,
@@ -58,7 +60,11 @@ class SimulationStudioApp:
 
         # 1. Initialize Simulation Environment
         self.project = create_oval_circuit()
-        self.env = SimulationEnvironment(road_def=self.project.road_def)
+        self.env = SimulationEnvironment(
+            road_def=self.project.road_def,
+            agent=self.project.agent,
+            scenario_def=self.project.scenario_def
+        )
         self.obs, self.step_info = self.env.reset()
 
         # 2. Start TCP Simulation Server for External AI
@@ -115,7 +121,9 @@ class SimulationStudioApp:
             self.env.sensors,
             self.env.reward_engine.config,
             self.env.observation_schema,
-            self.env.entities
+            self.env.entities,
+            agent=self.project.agent,
+            scenario_def=self.project.scenario_def
         )
 
         # Wire Inspector Callbacks
@@ -124,8 +132,15 @@ class SimulationStudioApp:
             if not self.headless:
                 self.renderer.load_track(self.env.track)
             self.obs, self.step_info = self.env.reset()
+            self.inspector.run_validation()
             print("[Studio] Rebuilt 3D track mesh, broadphase, and collision geometry.")
         self.inspector.on_rebuild_mesh = do_rebuild
+
+        def do_agent_modified():
+            self.env.set_agent(self.inspector.agent)
+            self.project.agent = self.inspector.agent
+            print("[Studio] Recompiled agent action/obs/reward/term runtime pipelines.")
+        self.inspector.on_agent_modified = do_agent_modified
 
         def do_save():
             save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "presets")
@@ -134,8 +149,8 @@ class SimulationStudioApp:
             self.project.road_def = self.env.road_def
             self.project.vehicle_config = self.env.vehicle.config
             self.project.entities = self.env.entities
-            self.project.reward_config = self.env.reward_engine.config
-            self.project.observation_schema = self.env.observation_schema
+            self.project.agent = self.inspector.agent
+            self.project.scenario_def = self.inspector.scenario_def
             self.project.save(save_path)
             print(f"[Studio] Project successfully saved to {save_path}")
         self.inspector.on_save_project = do_save
@@ -149,8 +164,8 @@ class SimulationStudioApp:
                 self.env.vehicle.config = proj.vehicle_config
                 self.env.entities = proj.entities
                 self.env.obstacles = [e for e in proj.entities if getattr(e, 'is_collidable', False) or getattr(e, 'entity_type', '') in ('obstacle', 'barrier', 'cone')]
-                self.env.reward_engine.config = proj.reward_config
-                self.env.observation_schema = proj.observation_schema
+                self.env.set_agent(proj.agent)
+                self.env.scenario_def = proj.scenario_def
                 self.env.set_road_definition(proj.road_def)
                 if not self.headless:
                     self.renderer.load_track(self.env.track)
@@ -159,8 +174,9 @@ class SimulationStudioApp:
                 self.inspector.road_def = self.env.road_def
                 self.inspector.vehicle_config = self.env.vehicle.config
                 self.inspector.entities = self.env.entities
-                self.inspector.reward_config = self.env.reward_engine.config
-                self.inspector.observation_schema = self.env.observation_schema
+                self.inspector.agent = proj.agent
+                self.inspector.scenario_def = proj.scenario_def
+                self.inspector.run_validation()
                 self.obs, self.step_info = self.env.reset()
                 print(f"[Studio] Loaded project from {load_path}")
             else:
@@ -171,6 +187,8 @@ class SimulationStudioApp:
             proj = create_oval_circuit()
             self.project = proj
             self.env.clear_entities()
+            self.env.set_agent(proj.agent)
+            self.env.scenario_def = proj.scenario_def
             self.env.set_road_definition(proj.road_def)
             if not self.headless:
                 self.renderer.load_track(self.env.track)
@@ -178,9 +196,46 @@ class SimulationStudioApp:
             self.track_editor.entities = self.env.entities
             self.inspector.road_def = self.env.road_def
             self.inspector.entities = self.env.entities
+            self.inspector.agent = proj.agent
+            self.inspector.scenario_def = proj.scenario_def
+            self.inspector.run_validation()
             self.obs, self.step_info = self.env.reset()
             print("[Studio] Created new environment.")
         self.inspector.on_new_project = do_new
+
+        def do_export_training():
+            export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiments", "exported_training")
+            files = TrainingExporter.export_training_bundle(
+                output_dir=export_dir,
+                env_project=self.project,
+                scenario=self.project.scenario_def,
+                experiment=self.project.experiment_config
+            )
+            print(f"[Studio] Training bundle exported to {export_dir}: {list(files.keys())}")
+        self.inspector.on_export_training = do_export_training
+
+        def do_load_template(template_id: str):
+            proj = EnvironmentTemplateManager.create_project_from_template(template_id)
+            self.project = proj
+            self.env.clear_entities()
+            for ent in proj.entities:
+                self.env.add_entity(ent)
+            self.env.set_agent(proj.agent)
+            self.env.scenario_def = proj.scenario_def
+            self.env.set_road_definition(proj.road_def)
+            if not self.headless:
+                self.renderer.load_track(self.env.track)
+            self.track_editor.road_def = self.env.road_def
+            self.track_editor.entities = self.env.entities
+            self.inspector.road_def = self.env.road_def
+            self.inspector.vehicle_config = self.env.vehicle.config
+            self.inspector.entities = self.env.entities
+            self.inspector.agent = proj.agent
+            self.inspector.scenario_def = proj.scenario_def
+            self.inspector.run_validation()
+            self.obs, self.step_info = self.env.reset()
+            print(f"[Studio] Loaded template: {template_id}")
+        self.inspector.on_load_template = do_load_template
 
         def do_place_tool(tool_type: str):
             self.track_editor.active_tool = tool_type
@@ -475,8 +530,22 @@ class SimulationStudioApp:
                         self.recorder.save_to_file(ep_path)
                         print(f"[Studio] Saved episode recording to {ep_path}")
                     else:
-                        self.recorder.start_recording(self.env.road_def.name, self.env.clock.seed)
-                        print("[Studio] Started recording episode frames...")
+                        obs_schema = self.env.agent.observation_space.export_schema() if self.env.agent else self.env.observation_schema.to_dict()
+                        act_schema = self.env.agent.action_space.export_schema() if self.env.agent else self.env.action_config.to_dict()
+                        rew_cfg = self.env.agent.reward_function.to_dict() if self.env.agent else self.env.reward_engine.config.to_dict()
+                        fp = self.project.compute_fingerprint() if hasattr(self.project, 'compute_fingerprint') else ""
+                        self.recorder.start_recording(
+                            track_name=self.env.road_def.name,
+                            seed=self.env.clock.seed,
+                            env_config=self.project.to_dict() if hasattr(self.project, 'to_dict') else {},
+                            env_version=getattr(self.project, 'environment_version', '1.0.0'),
+                            scenario_name=self.env.scenario_def.name if self.env.scenario_def else "Default",
+                            observation_schema=obs_schema,
+                            action_schema=act_schema,
+                            reward_config=rew_cfg,
+                            fingerprint=fp
+                        )
+                        print("[Studio] Started recording episode frames with complete Phase 3 metadata...")
                     return
 
     def _render(self) -> None:

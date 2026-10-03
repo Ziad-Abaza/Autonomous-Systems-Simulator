@@ -1,7 +1,7 @@
 """
 High-performance Gymnasium-compliant Simulation Environment.
 Integrates world physics, modular vehicle dynamics, sensors, reward engine,
-termination logic, and scenario conditions.
+termination logic, scenario conditions, and Phase 3 Declarative Agent pipeline.
 """
 
 from __future__ import annotations
@@ -29,12 +29,19 @@ from sim_env.reward_engine import RewardEngine, RewardConfig
 from sim_env.termination_engine import TerminationEngine, TerminationConfig
 from sim_env.domain_randomizer import DomainRandomizer, DomainRandomizationConfig
 from sim_env.scenarios import ScenarioConfig
+from sim_env.agent import AgentDefinition
+from sim_env.episode_config import EpisodeConfiguration, SpawnMode, ResetBehavior
+from sim_env.scenario_designer import ScenarioDefinition
+from sim_env.action_designer import ActionSpaceDefinition, CompiledActionDecoder
+from sim_env.observation_designer import ObservationSpaceDefinition, CompiledObservationPipeline
+from sim_env.reward_designer import RewardFunctionDefinition, CompiledRewardEngine
+from sim_env.termination_designer import TerminationDefinition, CompiledTerminationEvaluator
 
 
 class SimulationEnvironment:
     """
     Core AI Environment integrating Simulation + Agent Sensors + Rewards + Termination.
-    Follows standard Gymnasium reset/step lifecycle.
+    Follows standard Gymnasium reset/step lifecycle with compiled zero-overhead pipelines.
     """
     def __init__(
         self,
@@ -47,6 +54,9 @@ class SimulationEnvironment:
         termination_config: Optional[TerminationConfig] = None,
         randomization_config: Optional[DomainRandomizationConfig] = None,
         scenario_config: Optional[ScenarioConfig] = None,
+        agent: Optional[AgentDefinition] = None,
+        episode_config: Optional[EpisodeConfiguration] = None,
+        scenario_def: Optional[ScenarioDefinition] = None,
         physics_hz: float = 60.0,
         seed: int = 42
     ):
@@ -70,7 +80,12 @@ class SimulationEnvironment:
         # Sensors
         self.sensors = sensor_manager or SensorManager.create_default_sensor_suite()
 
-        # RL Schemas & Engines
+        # Phase 3 Declarative Subsystems
+        self.agent: Optional[AgentDefinition] = agent
+        self.episode_config: EpisodeConfiguration = episode_config or EpisodeConfiguration(random_seed=seed)
+        self.scenario_def: Optional[ScenarioDefinition] = scenario_def
+
+        # Legacy RL Engines & Schemas (maintained for full backward compatibility)
         self.action_config = action_config or ActionSpaceConfig()
         self.observation_schema = observation_schema or ObservationSchema()
         self.reward_engine = RewardEngine(reward_config or RewardConfig())
@@ -78,13 +93,37 @@ class SimulationEnvironment:
         self.domain_randomizer = DomainRandomizer(randomization_config or DomainRandomizationConfig())
         self.scenario = scenario_config or ScenarioConfig()
 
-        # Active physical properties (modified by scenario & domain randomization)
-        self.active_surface_friction = self.road_def.default_friction * self.scenario.surface_friction_mult
+        # Compiled Phase 3 pipelines
+        self.compiled_action_decoder: Optional[CompiledActionDecoder] = None
+        self.compiled_obs_pipeline: Optional[CompiledObservationPipeline] = None
+        self.compiled_reward_engine: Optional[CompiledRewardEngine] = None
+        self.compiled_termination_evaluator: Optional[CompiledTerminationEvaluator] = None
+
+        if self.agent is not None:
+            self._compile_agent_pipelines()
+
+        # Active physical properties
+        fric_mult = self.scenario_def.surface_friction_mult if self.scenario_def else self.scenario.surface_friction_mult
+        self.active_surface_friction = self.road_def.default_friction * fric_mult
 
         # History tracking
         self.current_step = 0
         self.is_done = False
         self.last_action = [0.0, 0.0, 0.0]
+        self.last_termination_reason_dict: Dict[str, Any] = {"reason": "running"}
+
+    def _compile_agent_pipelines(self) -> None:
+        """Compiles authoring agent spaces and functions into zero-overhead runtime engines."""
+        if self.agent is not None:
+            self.compiled_action_decoder = self.agent.action_space.compile_decoder()
+            self.compiled_obs_pipeline = self.agent.observation_space.compile_pipeline()
+            self.compiled_reward_engine = self.agent.reward_function.compile_engine()
+            self.compiled_termination_evaluator = self.agent.termination_rules.compile_evaluator()
+
+    def set_agent(self, agent: AgentDefinition) -> None:
+        """Sets active agent definition and compiles runtime pipelines."""
+        self.agent = agent
+        self._compile_agent_pipelines()
 
     def set_road_definition(self, road_def: RoadDefinition) -> None:
         """Updates road definition and regenerates 3D mesh and collision bounds."""
@@ -92,13 +131,11 @@ class SimulationEnvironment:
         self.track = TrackMeshGenerator.generate(self.road_def)
         self.track_queries = TrackSpatialQueries(self.track)
         self.checkpoint_tracker = CheckpointTracker(self.track)
-        # Re-register entities into new broadphase
         if self.track.broadphase:
             for ent in self.entities:
                 self.track.broadphase.insert_entity(ent)
 
     def add_obstacle(self, obstacle: Any) -> None:
-        """Adds an obstacle entity (backward-compatible)."""
         if obstacle not in self.obstacles:
             self.obstacles.append(obstacle)
         if obstacle not in self.entities:
@@ -107,7 +144,6 @@ class SimulationEnvironment:
             self.track.broadphase.insert_entity(obstacle)
 
     def add_entity(self, entity: WorldEntity) -> None:
-        """Adds a WorldEntity to the environment."""
         if entity not in self.entities:
             self.entities.append(entity)
         if getattr(entity, 'is_collidable', False) and entity not in self.obstacles:
@@ -116,7 +152,6 @@ class SimulationEnvironment:
             self.track.broadphase.insert_entity(entity)
 
     def remove_entity(self, entity_id: str) -> bool:
-        """Removes entity by its entity_id."""
         to_remove = [e for e in self.entities if getattr(e, 'entity_id', '') == entity_id]
         if to_remove:
             for ent in to_remove:
@@ -134,55 +169,109 @@ class SimulationEnvironment:
         self.entities.clear()
         self.obstacles.clear()
 
-
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[Union[np.ndarray, Dict[str, Any]], Dict[str, Any]]:
         """
         Resets environment to initial state, returning (initial_observation, info).
         """
-        if seed is not None:
-            self.clock.reset(seed=seed)
-        else:
-            self.clock.reset()
+        reset_seed = seed if seed is not None else self.episode_config.random_seed
+        self.clock.reset(seed=reset_seed)
 
         self.current_step = 0
         self.is_done = False
         self.last_action = [0.0, 0.0, 0.0]
+        self.last_termination_reason_dict = {"reason": "reset", "step": 0, "sim_time": 0.0}
 
-        # Domain Randomization
-        dr_params = self.domain_randomizer.sample_parameters(self.clock.rng)
-        self.active_surface_friction = (
-            self.road_def.default_friction *
-            self.scenario.surface_friction_mult *
-            dr_params['surface_friction_factor']
-        )
+        # Domain Randomization (Scenario Def or Legacy Config)
+        if self.scenario_def and self.scenario_def.randomization.enabled:
+            dr_params = self.scenario_def.randomization.sample_all(self.clock.rng)
+            mass_f = dr_params.get("vehicle_mass_mult", 1.0)
+            tire_f = dr_params.get("tire_friction_mult", 1.0)
+            surf_f = dr_params.get("surface_friction_mult", 1.0)
+            lat_jit = dr_params.get("spawn_lateral_jitter_m", 0.0)
+            yaw_jit = math.radians(dr_params.get("spawn_heading_jitter_deg", 0.0))
+        else:
+            legacy_dr = self.domain_randomizer.sample_parameters(self.clock.rng)
+            mass_f = legacy_dr['mass_factor']
+            tire_f = legacy_dr['tire_friction_factor']
+            surf_f = legacy_dr['surface_friction_factor']
+            lat_jit = legacy_dr['spawn_lateral_jitter']
+            yaw_jit = legacy_dr['spawn_heading_jitter']
 
-        # Configure vehicle randomized mass
-        self.vehicle.config.mass = self.base_vehicle_config.mass * dr_params['mass_factor']
-        self.vehicle.config.tire_friction = self.base_vehicle_config.tire_friction * dr_params['tire_friction_factor']
+        scen_surf_mult = self.scenario_def.surface_friction_mult if self.scenario_def else self.scenario.surface_friction_mult
+        self.active_surface_friction = self.road_def.default_friction * scen_surf_mult * surf_f
+
+        # Vehicle parameters
+        self.vehicle.config.mass = self.base_vehicle_config.mass * mass_f
+        self.vehicle.config.tire_friction = self.base_vehicle_config.tire_friction * tire_f
         self.vehicle._recompute_inertials()
 
         # Compute initial spawn pose
         sp = self.road_def.spawn_point
-        spawn_yaw = sp.yaw + dr_params['spawn_heading_jitter']
-        # Spawn jitter across road normal
+        spawn_yaw = sp.yaw + yaw_jit
         cos_y = math.cos(spawn_yaw)
         sin_y = math.sin(spawn_yaw)
         norm_x = -sin_y
         norm_y = cos_y
-        spawn_x = sp.x + norm_x * dr_params['spawn_lateral_jitter']
-        spawn_y = sp.y + norm_y * dr_params['spawn_lateral_jitter']
+        spawn_x = sp.x + norm_x * lat_jit
+        spawn_y = sp.y + norm_y * lat_jit
+        init_speed = sp.initial_speed
 
-        # Reset vehicle
+        if self.scenario_def and self.scenario_def.spawn_override:
+            so = self.scenario_def.spawn_override
+            if "pos" in so:
+                spawn_x, spawn_y = so["pos"][0], so["pos"][1]
+            if "yaw_deg" in so:
+                spawn_yaw = math.radians(so["yaw_deg"])
+            if "initial_speed" in so:
+                init_speed = float(so["initial_speed"])
+
+        if self.episode_config.spawn_mode == SpawnMode.CUSTOM_POSE:
+            c_pos = self.episode_config.custom_spawn_pos
+            spawn_x, spawn_y = c_pos[0], c_pos[1]
+            spawn_yaw = math.radians(self.episode_config.custom_spawn_yaw_deg)
+            init_speed = self.episode_config.initial_speed
+
         self.vehicle.reset(
             pos=Vec3(spawn_x, spawn_y, sp.z),
             yaw=spawn_yaw,
-            initial_speed=sp.initial_speed
+            initial_speed=init_speed
         )
+
+        # Apply scenario target speed override to reward engine if configured
+        if self.scenario_def and self.scenario_def.target_speed_override is not None:
+            if self.compiled_reward_engine:
+                for comp in self.compiled_reward_engine.active_components:
+                    if comp.component_type == "speed":
+                        comp.params["target_speed_ms"] = float(self.scenario_def.target_speed_override)
+            if hasattr(self.reward_engine, 'config'):
+                self.reward_engine.config.target_speed = float(self.scenario_def.target_speed_override)
+
+        # Apply scenario obstacle overrides if defined
+        if self.scenario_def and self.scenario_def.obstacle_overrides:
+            for obs_data in self.scenario_def.obstacle_overrides:
+                try:
+                    from sim_core.world.entity import create_entity
+                    ent_type = obs_data.get("entity_type", "cone")
+                    pos_raw = obs_data.get("pos", [0.0, 0.0, 0.0])
+                    ent_pos = Vec3(pos_raw[0], pos_raw[1], pos_raw[2] if len(pos_raw) > 2 else 0.0)
+                    ent_yaw = float(obs_data.get("yaw", 0.0))
+                    ent = create_entity(ent_type, ent_pos, ent_yaw)
+                    ent.name = obs_data.get("name", ent.name)
+                    self.add_entity(ent)
+                except Exception:
+                    pass
 
         # Reset trackers and engines
         self.checkpoint_tracker.reset(start_time=0.0)
         self.reward_engine.reset(initial_s=0.0)
         self.termination_engine.reset()
+        if self.compiled_reward_engine:
+            self.compiled_reward_engine.reset(initial_s=0.0)
+        if self.compiled_termination_evaluator:
+            self.compiled_termination_evaluator.reset()
+        if self.compiled_action_decoder:
+            self.compiled_action_decoder.reset()
+
         self.sensors.reset_all()
 
         # Update initial sensor readings
@@ -201,7 +290,6 @@ class SimulationEnvironment:
         Returns: (obs, reward, terminated, truncated, info)
         """
         if self.is_done:
-            # Explicit contract: stepping after episode termination/truncation returns terminal state
             last_obs = self._build_observation()
             info = self._build_info_dict(
                 terminated=True,
@@ -216,8 +304,16 @@ class SimulationEnvironment:
         dt = self.clock.advance_fixed_step()
 
         # 1. Action Validation & Decoding
-        action_valid, action_err = self.action_config.validate_action(action)
-        steer, throttle, brake = self.action_config.decode_action(action)
+        if self.compiled_action_decoder:
+            action_valid, action_err = self.compiled_action_decoder.validate_action(action)
+            decoded = self.compiled_action_decoder.decode(action, dt=dt)
+            steer = float(decoded[0]) if len(decoded) > 0 else 0.0
+            throttle = float(decoded[1]) if len(decoded) > 1 else 0.0
+            brake = float(decoded[2]) if len(decoded) > 2 else 0.0
+        else:
+            action_valid, action_err = self.action_config.validate_action(action)
+            steer, throttle, brake = self.action_config.decode_action(action)
+
         self.last_action = [steer, throttle, brake]
 
         # 2. Physics Step
@@ -231,11 +327,11 @@ class SimulationEnvironment:
         )
         curr_pos_2d = Vec2(self.vehicle.state.pos.x, self.vehicle.state.pos.y)
 
-        # Update dynamic entities (e.g. traffic light timers)
+        # Update dynamic entities
         for ent in self.entities:
             ent.update(dt)
 
-        # 3. Collision Checks (accelerated by spatial hash broadphase)
+        # 3. Collision Checks
         bound_col = VehicleCollisionChecker.check_track_boundary_collision(
             self.vehicle,
             self.track.all_boundary_segments,
@@ -247,7 +343,6 @@ class SimulationEnvironment:
             broadphase=self.track.broadphase
         )
         is_colliding = bound_col.collided or obs_col.collided
-
 
         # 4. Track Spatial Relationship
         track_info = self.track_queries.query_vehicle_pose(curr_pos_2d, self.vehicle.state.yaw)
@@ -264,32 +359,82 @@ class SimulationEnvironment:
             current_time=self.clock.sim_time
         )
 
-        # 6. Reward Calculation & Decomposition
-        step_reward, reward_breakdown = self.reward_engine.compute_step_reward(
-            current_s=current_s,
-            track_length=self.track.spline.total_length,
-            is_closed=self.road_def.is_closed,
-            lateral_offset=lateral_offset,
-            road_width=road_width,
-            speed=self.vehicle.state.speed,
-            heading_error=heading_error,
-            current_steer=self.vehicle.state.steering_angle,
-            is_colliding=is_colliding,
-            is_on_road=is_on_road,
-            checkpoint_passed=cp_passed,
-            lap_completed=lap_completed
-        )
+        # 6. Reward Calculation
+        if self.compiled_reward_engine:
+            step_reward, reward_breakdown = self.compiled_reward_engine.compute_step_reward(
+                current_s=current_s,
+                track_length=self.track.spline.total_length,
+                is_closed=self.road_def.is_closed,
+                lateral_offset=lateral_offset,
+                road_width=road_width,
+                speed=self.vehicle.state.speed,
+                heading_error=heading_error,
+                current_steer=self.vehicle.state.steering_angle,
+                is_colliding=is_colliding,
+                is_on_road=is_on_road,
+                checkpoint_passed=cp_passed,
+                lap_completed=lap_completed,
+                dt=dt
+            )
+            self.reward_engine.last_breakdown = reward_breakdown
+            self.reward_engine.total_accumulated_reward = self.compiled_reward_engine.total_accumulated_reward
+        else:
+            step_reward, reward_breakdown = self.reward_engine.compute_step_reward(
+                current_s=current_s,
+                track_length=self.track.spline.total_length,
+                is_closed=self.road_def.is_closed,
+                lateral_offset=lateral_offset,
+                road_width=road_width,
+                speed=self.vehicle.state.speed,
+                heading_error=heading_error,
+                current_steer=self.vehicle.state.steering_angle,
+                is_colliding=is_colliding,
+                is_on_road=is_on_road,
+                checkpoint_passed=cp_passed,
+                lap_completed=lap_completed
+            )
 
         # 7. Termination & Truncation Evaluation
-        terminated, truncated, term_reason = self.termination_engine.evaluate(
-            dt=dt,
-            is_colliding=is_colliding,
-            is_on_road=is_on_road,
-            heading_error=heading_error,
-            checkpoint_passed=cp_passed,
-            laps_completed=self.checkpoint_tracker.laps_completed,
-            is_closed=self.road_def.is_closed
-        )
+        if self.compiled_termination_evaluator:
+            terminated, truncated, term_reason_dict = self.compiled_termination_evaluator.evaluate(
+                dt=dt,
+                is_colliding=is_colliding,
+                is_on_road=is_on_road,
+                heading_error=heading_error,
+                checkpoint_passed=cp_passed,
+                laps_completed=self.checkpoint_tracker.laps_completed,
+                is_closed=self.road_def.is_closed
+            )
+            term_reason = term_reason_dict.get("reason", "running")
+            self.last_termination_reason_dict = term_reason_dict
+        else:
+            terminated, truncated, term_reason = self.termination_engine.evaluate(
+                dt=dt,
+                is_colliding=is_colliding,
+                is_on_road=is_on_road,
+                heading_error=heading_error,
+                checkpoint_passed=cp_passed,
+                laps_completed=self.checkpoint_tracker.laps_completed,
+                is_closed=self.road_def.is_closed
+            )
+            self.last_termination_reason_dict = {
+                "reason": term_reason,
+                "step": self.current_step,
+                "sim_time": round(self.clock.sim_time, 4),
+                "is_truncation": truncated
+            }
+
+        # Episode duration limit check from EpisodeConfiguration
+        if not terminated and not truncated and self.episode_config.max_duration_seconds > 0:
+            if self.clock.sim_time >= self.episode_config.max_duration_seconds:
+                truncated = True
+                term_reason = "max_duration_exceeded"
+                self.last_termination_reason_dict = {
+                    "reason": term_reason,
+                    "step": self.current_step,
+                    "sim_time": round(self.clock.sim_time, 4),
+                    "is_truncation": True
+                }
 
         if terminated or truncated:
             self.is_done = True
@@ -314,7 +459,6 @@ class SimulationEnvironment:
         return obs, step_reward, terminated, truncated, info
 
     def _build_sensor_context(self) -> Dict[str, Any]:
-        """Provides environment context for sensor evaluations."""
         obstacle_segs = []
         for obs in self.obstacles:
             obstacle_segs.extend(obs.get_boundary_segments())
@@ -328,7 +472,10 @@ class SimulationEnvironment:
         }
 
     def _build_observation(self) -> Union[np.ndarray, Dict[str, Any]]:
-        """Constructs observation according to ObservationSchema."""
+        """Constructs observation according to CompiledObservationPipeline or ObservationSchema."""
+        if self.compiled_obs_pipeline:
+            return self.compiled_obs_pipeline.build_observation(self.sensors.get_all_samples())
+
         schema = self.observation_schema
         st_sensor = self.sensors.get_sensor("vehicle_state")
         st_data = st_sensor.get_last_sample() if st_sensor else {}
@@ -342,7 +489,7 @@ class SimulationEnvironment:
         if schema.flatten_vector:
             features = []
             if schema.include_speed:
-                features.append(st_data.get('speed', 0.0) / 45.0)  # Normalize ~ [0, 1]
+                features.append(st_data.get('speed', 0.0) / 45.0)
             if schema.include_velocity:
                 features.append(st_data.get('vel_x', 0.0) / 45.0)
                 features.append(st_data.get('vel_y', 0.0) / 10.0)
@@ -361,7 +508,6 @@ class SimulationEnvironment:
                 if 'ranges_norm' in lidar_data and lidar_data['ranges_norm'] is not None:
                     features.extend(lidar_data['ranges_norm'].tolist())
                 else:
-                    # Pad with 1.0 (clear space) so observation vector dimension is strictly invariant
                     features.extend([1.0] * 15)
 
             obs_vec = np.array(features, dtype=np.float32)
@@ -369,7 +515,6 @@ class SimulationEnvironment:
             if schema.include_camera_rgb:
                 img_data = camera_data if camera_data is not None else np.zeros((84, 84, 3), dtype=np.uint8)
                 if len(features) == 0:
-                    # Vision-only observation
                     return img_data
                 return {
                     'vector': obs_vec,
@@ -421,6 +566,7 @@ class SimulationEnvironment:
             'terminated': terminated,
             'truncated': truncated,
             'termination_reason': reason,
+            'termination_info': self.last_termination_reason_dict,
             'reward_breakdown': reward_breakdown or self.reward_engine.last_breakdown,
             'total_reward': self.reward_engine.total_accumulated_reward,
             'speed': float(st.speed),

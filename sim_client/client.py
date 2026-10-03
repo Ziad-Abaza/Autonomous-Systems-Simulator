@@ -39,6 +39,14 @@ class SimulationClient:
         self.env_spec = payload
         return payload
 
+    def discover_contract(self) -> Dict[str, Any]:
+        """Discovers rich declarative environment contract (Phase 3)."""
+        self._send(MessageType.DISCOVER_CONTRACT, {})
+        msg_type, payload = self._receive()
+        if msg_type != MessageType.CONTRACT_ACK:
+            raise RuntimeError(f"Contract discovery failed: {payload}")
+        return payload
+
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Sends reset command and returns (observation, info)."""
         payload = {'seed': seed, 'options': options}

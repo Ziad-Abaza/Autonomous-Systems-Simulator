@@ -187,19 +187,15 @@ class SimulationHUD:
         tot_str = f"Total: {total_accumulated:+7.2f}"
         surface.blit(f_mono.render(tot_str, True, (255, 230, 50)), (x + 175, y + 10))
 
-        # Reward terms table
-        row_y = y + 38
-        terms = [
-            ("Progress (ds)", breakdown.get('progress', 0.0), (80, 220, 120)),
-            ("Centering", breakdown.get('centering', 0.0), (80, 200, 255)),
-            ("Speed target", breakdown.get('speed', 0.0), (120, 180, 255)),
-            ("Heading align", breakdown.get('heading', 0.0), (160, 140, 255)),
-            ("Smoothness", breakdown.get('smoothness', 0.0), (220, 150, 100)),
-            ("Checkpoint bonus", breakdown.get('checkpoint', 0.0), (255, 215, 0)),
-            ("Lap bonus", breakdown.get('lap', 0.0), (255, 225, 50)),
-            ("Collision penalty", breakdown.get('collision', 0.0), (255, 60, 60)),
-            ("Off-road penalty", breakdown.get('off_road', 0.0), (255, 80, 80)),
-        ]
+        # Dynamic reward terms from active breakdown
+        row_y = y + 36
+        terms = []
+        for k, v in breakdown.items():
+            if k == 'total':
+                continue
+            col = (80, 220, 120) if v >= 0 else (255, 70, 70)
+            lbl = k.replace("_", " ").title()[:15]
+            terms.append((lbl, v, col))
 
         for label, val, col in terms:
             surface.blit(f_small.render(label, True, (170, 180, 195)), (x + 12, row_y))

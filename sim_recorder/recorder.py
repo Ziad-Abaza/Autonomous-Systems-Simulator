@@ -21,16 +21,34 @@ class EpisodeRecorder:
         self.metadata: Dict[str, Any] = {}
         self.frames: List[Dict[str, Any]] = []
 
-    def start_recording(self, track_name: str, seed: int, env_config: Optional[Dict[str, Any]] = None) -> None:
+    def start_recording(
+        self,
+        track_name: str,
+        seed: int,
+        env_config: Optional[Dict[str, Any]] = None,
+        env_version: str = "1.0.0",
+        scenario_name: str = "Standard",
+        observation_schema: Optional[Dict[str, Any]] = None,
+        action_schema: Optional[Dict[str, Any]] = None,
+        reward_config: Optional[Dict[str, Any]] = None,
+        fingerprint: str = ""
+    ) -> None:
         self.is_recording = True
         self.frames = []
         self.metadata = {
             'timestamp': time.time(),
             'track_name': track_name,
             'seed': seed,
+            'env_version': env_version,
+            'scenario_name': scenario_name,
+            'env_fingerprint': fingerprint,
             'env_config': env_config or {},
+            'observation_schema': observation_schema or {},
+            'action_schema': action_schema or {},
+            'reward_config': reward_config or {},
             'total_steps': 0,
             'termination_reason': 'in_progress',
+            'episode_result': {}
         }
 
     def record_step(
@@ -68,10 +86,12 @@ class EpisodeRecorder:
         }
         self.frames.append(frame)
 
-    def stop_recording(self, termination_reason: str = "completed") -> None:
+    def stop_recording(self, termination_reason: str = "completed", episode_result: Optional[Dict[str, Any]] = None) -> None:
         self.is_recording = False
         self.metadata['total_steps'] = len(self.frames)
         self.metadata['termination_reason'] = termination_reason
+        if episode_result:
+            self.metadata['episode_result'] = episode_result
 
     def save_to_file(self, filepath: str) -> None:
         """Saves recorded episode to JSON or gzipped JSON file."""
