@@ -32,21 +32,22 @@ def parse_args():
     parser.add_argument("--headless", action="store_true", help="Run in headless simulation mode without GUI")
     parser.add_argument("--port", type=int, default=8765, help="TCP port for external AI model connection (default: 8765)")
     parser.add_argument("--num-envs", type=int, default=1, help="Headless only: host N independent envs on --port via one multi-client server (default: 1)")
-    parser.add_argument("--track", type=str, default="oval", help="Initial track: 'oval', 'serpentine', 'obstacle', or path to .sim.json")
+    parser.add_argument("--track", type=str, default=None, help="Open this track directly into the workspace: 'oval', 'serpentine', 'obstacle', or path to .sim.json (default: studio home)")
     parser.add_argument("--width", type=int, default=1280, help="Window width (default: 1280)")
     parser.add_argument("--height", type=int, default=720, help="Window height (default: 720)")
     return parser.parse_args()
 
 
-def _run_multi_headless(port: int, num_envs: int, track: str) -> int:
+def _run_multi_headless(port: int, num_envs: int, track: Optional[str]) -> int:
     """Single-process, multi-env headless server for env_mode='tcp_multi'."""
     import time
+    from typing import Optional
     from sim_net.multi_server import SimServerMulti
     from sim_env.environment import SimulationEnvironment
 
     if track == "serpentine":
         proj = create_serpentine_track()
-    elif os.path.exists(track):
+    elif track and os.path.exists(track):
         proj = EnvironmentProject.load(track)
     else:
         proj = create_oval_circuit()
@@ -90,7 +91,7 @@ def main():
     print("=" * 65, flush=True)
     print(f"Mode: {'Headless Training' if args.headless else 'Interactive 3D Studio'}", flush=True)
     print(f"External AI Server Port: {args.port}", flush=True)
-    print(f"Initial Environment: {args.track}", flush=True)
+    print(f"Initial Environment: {args.track or 'studio home (oval)'}", flush=True)
     print("=" * 65, flush=True)
 
     if args.headless and args.num_envs > 1:
@@ -103,26 +104,22 @@ def main():
         port=args.port
     )
 
-    # Load requested track preset if specified
-    if args.track == "serpentine":
-        proj = create_serpentine_track()
-        app.env.set_road_definition(proj.road_def)
-        if not args.headless:
-            app.renderer.load_track(app.env.track)
-    elif args.track == "obstacle":
-        proj = create_obstacle_challenge()
-        app.env.set_road_definition(proj.road_def)
-        # Add obstacles
-        from sim_core.world.obstacle import Obstacle
-        for obs_data in proj.scenario_config.obstacles:
-            app.env.add_obstacle(Obstacle.from_dict(obs_data))
-        if not args.headless:
-            app.renderer.load_track(app.env.track)
-    elif os.path.exists(args.track):
-        proj = EnvironmentProject.load(args.track)
-        app.env.set_road_definition(proj.road_def)
-        if not args.headless:
-            app.renderer.load_track(app.env.track)
+    # --track opens the requested environment directly into the workspace;
+    # without it the studio starts on the home/library screen.
+    if args.track:
+        proj = None
+        if args.track == "serpentine":
+            proj = create_serpentine_track()
+        elif args.track == "obstacle":
+            proj = create_obstacle_challenge()
+        elif args.track == "oval":
+            proj = create_oval_circuit()
+        elif os.path.exists(args.track):
+            proj = EnvironmentProject.load(args.track)
+            app.open_project(proj, path=args.track if not args.headless else None)
+            proj = None
+        if proj is not None:
+            app.open_project(proj, None)
 
     try:
         app.run()

@@ -184,8 +184,9 @@ class SimulationHUD:
 
         # Header with Total Reward
         surface.blit(f_bold.render("REWARD DECOMPOSITION", True, (0, 200, 255)), (x + 12, y + 10))
-        tot_str = f"Total: {total_accumulated:+7.2f}"
-        surface.blit(f_mono.render(tot_str, True, (255, 230, 50)), (x + 175, y + 10))
+        tot_str = f"{total_accumulated:+7.1f}"
+        tot_lbl = f_mono.render(tot_str, True, (255, 230, 50))
+        surface.blit(tot_lbl, (x + w - 10 - tot_lbl.get_width(), y + 11))
 
         # Dynamic reward terms from active breakdown
         row_y = y + 36

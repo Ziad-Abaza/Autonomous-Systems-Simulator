@@ -67,6 +67,23 @@ class EnvironmentInspector:
     CATEGORY_RL = ["AGENT", "OBS", "ACTION", "REWARD", "TERM", "SCENARIO", "VALIDATE", "TRAIN"]
     ALL_TABS = CATEGORY_GEO + CATEGORY_RL
 
+    # Abbreviated tab labels that fit the fixed-width tab strip
+    TAB_LABELS = {
+        "OVERVIEW": "OVER", "SCENE": "SCENE", "TRACK": "TRACK",
+        "POINT": "POINT", "ENTITY": "ENT",
+        "AGENT": "AGT", "OBS": "OBS", "ACTION": "ACT", "REWARD": "RWD",
+        "TERM": "TRM", "SCENARIO": "SCN", "VALIDATE": "VAL", "TRAIN": "TRN",
+    }
+    # Validation issue subsystem → owning tab (click-to-navigate)
+    SUBSYSTEM_TAB = {
+        "road": "TRACK", "track": "TRACK", "geometry": "TRACK",
+        "spawn": "TRACK", "checkpoint": "TRACK",
+        "obs": "OBS", "sensor": "OBS", "observation": "OBS",
+        "action": "ACTION", "reward": "REWARD", "term": "TERM",
+        "termination": "TERM", "scenario": "SCENARIO", "agent": "AGENT",
+        "entity": "ENTITY", "entities": "ENTITY",
+    }
+
     def __init__(
         self,
         road_def: RoadDefinition,
@@ -110,6 +127,21 @@ class EnvironmentInspector:
         # Training & Experiments panel hooks (provided by the app layer)
         self.train_provider: Optional[Callable[[], Dict[str, Any]]] = None
         self.on_train_action: Optional[Callable[[str], None]] = None
+
+        # Per-tab scroll offsets + geometry of the scrollable props area
+        self.tab_scroll: Dict[str, int] = {}
+        self.props_area: Optional[pygame.Rect] = None
+        self._props_count: int = 0
+
+    def scroll(self, dy_steps: int) -> None:
+        """Mouse-wheel scroll for the property area (called when the
+        cursor is over the panel)."""
+        if not self.props_area:
+            return
+        off = self.tab_scroll.get(self.active_tab, 0)
+        max_off = max(0, self._props_count * 24 - self.props_area.h)
+        self.tab_scroll[self.active_tab] = max(
+            0, min(max_off, off - dy_steps * 48))
 
     def run_validation(self) -> ValidationReport:
         sensor_names = list(self.sensor_manager.sensors.keys()) if self.sensor_manager else []
@@ -244,8 +276,10 @@ class EnvironmentInspector:
                 props.append(PropertyRow("val_warns", f"Warnings ({len(rep.warnings)})", "label", f"{len(rep.warnings)} items"))
                 props.append(PropertyRow("val_infos", f"Info ({len(rep.infos)})", "label", f"{len(rep.infos)} items"))
                 props.append(PropertyRow("val_btn_run", "Re-Run Validator", "action", "VALIDATE NOW"))
-                for err in rep.errors[:4]:
-                    props.append(PropertyRow(f"val_err_{err.subsystem}", f"ERR: {err.subsystem}", "label", err.message[:30]))
+                for i, err in enumerate(rep.errors[:8]):
+                    props.append(PropertyRow(f"val_nav_err_{i}", f"ERROR: {err.subsystem}", "nav", err.message[:32]))
+                for i, w in enumerate(rep.warnings[:6]):
+                    props.append(PropertyRow(f"val_nav_warn_{i}", f"WARN: {w.subsystem}", "nav", w.message[:32]))
 
         # 8b. TRAINING & EXPERIMENTS TAB
         elif self.active_tab == "TRAIN":
@@ -431,6 +465,22 @@ class EnvironmentInspector:
                 props.append(PropertyRow("ent_none", "No Entity Selected", "label", "Click entity on canvas"))
 
         return props
+
+    def handle_nav(self, prop_id: str) -> None:
+        """Navigate to the owning tab for a validation issue row."""
+        rep = self.last_validation_report
+        issue = None
+        if prop_id.startswith("val_nav_err_") and rep:
+            idx = int(prop_id.rsplit("_", 1)[-1])
+            if idx < len(rep.errors):
+                issue = rep.errors[idx]
+        elif prop_id.startswith("val_nav_warn_") and rep:
+            idx = int(prop_id.rsplit("_", 1)[-1])
+            if idx < len(rep.warnings):
+                issue = rep.warnings[idx]
+        if issue is not None:
+            self.active_tab = self.SUBSYSTEM_TAB.get(
+                issue.subsystem.lower(), "VALIDATE")
 
     def handle_property_change(self, prop_id: str, delta_or_value: Any) -> None:
         """Applies property updates directly to underlying data models with validation."""
@@ -620,8 +670,13 @@ class EnvironmentInspector:
         header_y = y + 8
         surface.blit(f_bold.render("RL ENVIRONMENT DESIGNER", True, (0, 210, 255)), (x + 12, header_y))
 
-        # 2. Two-tier category tab bar
-        # Row 1: World & Geometry
+        # 2. Two-tier category tab bar (abbreviated labels + issue badges)
+        rep = self.last_validation_report
+        error_tabs = set()
+        if rep:
+            for issue in rep.errors:
+                error_tabs.add(self.SUBSYSTEM_TAB.get(
+                    issue.subsystem.lower(), "VALIDATE"))
         tab_y1 = y + 32
         tab_w1 = (w - 20) // len(self.CATEGORY_GEO)
         for i, tab in enumerate(self.CATEGORY_GEO):
@@ -630,8 +685,11 @@ class EnvironmentInspector:
             bg = (0, 130, 220) if is_sel else (28, 35, 48)
             txt_col = (255, 255, 255) if is_sel else (150, 165, 185)
             pygame.draw.rect(surface, bg, tab_rect, border_radius=3)
-            lbl = f_small.render(tab, True, txt_col)
+            lbl = f_small.render(self.TAB_LABELS.get(tab, tab), True, txt_col)
             surface.blit(lbl, (tab_rect.centerx - lbl.get_width() // 2, tab_rect.centery - lbl.get_height() // 2))
+            if tab in error_tabs:
+                pygame.draw.circle(surface, (230, 80, 70),
+                                   (tab_rect.right - 6, tab_rect.y + 5), 3)
             clickable_buttons.append((tab_rect, f"tab_{tab}"))
 
         # Row 2: RL Architecture
@@ -643,21 +701,35 @@ class EnvironmentInspector:
             bg = (0, 130, 220) if is_sel else (28, 35, 48)
             txt_col = (255, 255, 255) if is_sel else (150, 165, 185)
             pygame.draw.rect(surface, bg, tab_rect, border_radius=3)
-            lbl = f_small.render(tab, True, txt_col)
+            lbl = f_small.render(self.TAB_LABELS.get(tab, tab), True, txt_col)
             surface.blit(lbl, (tab_rect.centerx - lbl.get_width() // 2, tab_rect.centery - lbl.get_height() // 2))
+            if tab in error_tabs:
+                pygame.draw.circle(surface, (230, 80, 70),
+                                   (tab_rect.right - 6, tab_rect.y + 5), 3)
             clickable_buttons.append((tab_rect, f"tab_{tab}"))
 
         # Separator line
         sep_y = tab_y2 + 26
         pygame.draw.line(surface, (45, 55, 75), (x + 10, sep_y), (x + w - 10, sep_y), 1)
 
-        # 3. Property Rows
+        # 3. Property Rows — scrollable, clipped region
         props = self.get_properties_for_active_tab()
-        row_y = sep_y + 6
+        self._props_count = len(props)
+        bot_y = y + h - 80
+        self.props_area = pygame.Rect(x + 4, sep_y + 4, w - 8, bot_y - sep_y - 10)
+        max_off = max(0, len(props) * 24 - self.props_area.h)
+        scroll_off = max(0, min(max_off,
+                                self.tab_scroll.get(self.active_tab, 0)))
+        self.tab_scroll[self.active_tab] = scroll_off
+        surface.set_clip(self.props_area)
+        row_y = sep_y + 6 - scroll_off
         row_h = 24
 
         for p in props:
-            if row_y > (y + h - 85):
+            if row_y + row_h < self.props_area.top:
+                row_y += row_h
+                continue
+            if row_y > self.props_area.bottom:
                 break
 
             lbl_color = (0, 200, 255) if "---" in p.label else (180, 195, 210)
@@ -755,11 +827,33 @@ class EnvironmentInspector:
                         pygame.draw.lines(
                             surface, colors[si % len(colors)], False, pts, 1)
 
+            elif p.prop_type == "nav":
+                # Clickable navigation link — jumps to the owning tab
+                nav_rect = pygame.Rect(x + 10, row_y + 1, w - 20, 20)
+                pygame.draw.rect(surface, (24, 34, 46), nav_rect, border_radius=3)
+                msg = str(p.current_value)
+                lbl_n = f_small.render(msg[:40], True, (150, 190, 230))
+                surface.blit(lbl_n, (nav_rect.x + 6, nav_rect.y + 3))
+                arrow = f_small.render("›", True, (0, 180, 230))
+                surface.blit(arrow, (nav_rect.right - 14, nav_rect.y + 3))
+                clickable_buttons.append((nav_rect, f"prop_nav_{p.prop_id}"))
+
             elif p.prop_type == "label":
                 lbl_v = f_small.render(str(p.current_value), True, (150, 160, 175))
                 surface.blit(lbl_v, (x + w - 12 - lbl_v.get_width(), row_y + 3))
 
             row_y += row_h
+
+        surface.set_clip(None)
+        # Scrollbar indicator when content overflows
+        if max_off > 0:
+            frac = self.props_area.h / max(1, len(props) * 24)
+            bar_h = max(20, int(self.props_area.h * frac))
+            rel = scroll_off / max_off
+            bar_y = self.props_area.y + int((self.props_area.h - bar_h) * rel)
+            pygame.draw.rect(surface, (60, 70, 90),
+                             (self.props_area.right - 3, bar_y, 3, bar_h),
+                             border_radius=2)
 
         # 4. Bottom Action Buttons (Rebuild 3D, New, Save, Load)
         bot_y = y + h - 80

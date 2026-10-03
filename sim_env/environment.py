@@ -527,6 +527,12 @@ class SimulationEnvironment:
             action_error=action_err
         )
 
+        # Exposed for the UI layer (recording, replay, HUD) so it does not
+        # need to intercept step results from every call site (including
+        # externally-driven TCP steps).
+        self.last_step_reward = float(step_reward)
+        self.last_step_info = info
+
         return obs, step_reward, terminated, truncated, info
 
     def _build_sensor_context(self) -> Dict[str, Any]:

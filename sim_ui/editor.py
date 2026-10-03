@@ -48,6 +48,23 @@ class VisualTrackEditor:
         self.view_offset_x = 0.0
         self.view_offset_y = 0.0
         self.zoom = 4.0  # pixels per meter
+        # The drawable canvas region in window coordinates — set by the
+        # editor UI each frame before input/draw. World (0,0) maps to its
+        # center, NOT the window center.
+        self.canvas_rect = pygame.Rect(0, 0, 800, 600)
+
+        # Interaction tool: "select" (no geometry mutation) or "draw"
+        # (control-point creation/insertion). Placement tools still use
+        # self.active_tool.
+        self.tool = "select"
+
+        # Snapping
+        self.snap_enabled = False
+        self.snap_step = 1.0  # meters
+
+        # Change notification — set by the app: called after any committed
+        # mutation (for dirty tracking + undo snapshots)
+        self.on_change = None
 
         # Display toggles
         self.show_curvature = True
@@ -83,20 +100,126 @@ class VisualTrackEditor:
         self.selected_entity_id = None
         self.selected_checkpoint_idx = None
 
-    def world_to_screen(self, wx: float, wy: float, screen_center_x: float, screen_center_y: float) -> Tuple[int, int]:
-        sx = int(screen_center_x + (wx + self.view_offset_x) * self.zoom)
-        sy = int(screen_center_y - (wy + self.view_offset_y) * self.zoom)
+    # ------------------------------------------------------- transforms
+
+    def _center(self) -> Tuple[float, float]:
+        return (self.canvas_rect.centerx, self.canvas_rect.centery)
+
+    def world_to_screen(self, wx: float, wy: float) -> Tuple[int, int]:
+        cx, cy = self._center()
+        sx = int(cx + (wx + self.view_offset_x) * self.zoom)
+        sy = int(cy - (wy + self.view_offset_y) * self.zoom)
         return sx, sy
 
-    def screen_to_world(self, sx: int, sy: int, screen_center_x: float, screen_center_y: float) -> Tuple[float, float]:
-        wx = (sx - screen_center_x) / self.zoom - self.view_offset_x
-        wy = -(sy - screen_center_y) / self.zoom - self.view_offset_y
+    def screen_to_world(self, sx: float, sy: float) -> Tuple[float, float]:
+        cx, cy = self._center()
+        wx = (sx - cx) / self.zoom - self.view_offset_x
+        wy = -(sy - cy) / self.zoom - self.view_offset_y
         return wx, wy
 
-    def handle_mouse_down(self, pos: Tuple[int, int], button: int, screen_center: Tuple[float, float]) -> bool:
+    # ------------------------------------------------ bounds & framing
+
+    def compute_bounds(self, margin: float = 8.0) -> Tuple[float, float, float, float]:
+        """World-space bounds of everything editable on the track."""
+        xs, ys = [], []
+        for cp in self.road_def.control_points:
+            hw = getattr(cp, "width", 12.0) * 0.5
+            xs += [cp.x - hw, cp.x + hw]
+            ys += [cp.y - hw, cp.y + hw]
+        sp = self.road_def.spawn_point
+        xs += [sp.x - 4.0, sp.x + 4.0]
+        ys += [sp.y - 4.0, sp.y + 4.0]
+        for ent in self.entities:
+            ext = max(getattr(ent, "length", 2.0), getattr(ent, "width", 2.0),
+                      getattr(ent, "radius", 1.0) * 2.0) * 0.5
+            xs += [ent.pos.x - ext, ent.pos.x + ext]
+            ys += [ent.pos.y - ext, ent.pos.y + ext]
+        if not xs:
+            return (-50.0, -50.0, 50.0, 50.0)
+        return (min(xs) - margin, min(ys) - margin,
+                max(xs) + margin, max(ys) + margin)
+
+    def frame_bounds(self, bounds: Tuple[float, float, float, float],
+                     pad_frac: float = 0.12) -> None:
+        """Fit the given world bounds inside the canvas with padding."""
+        minx, miny, maxx, maxy = bounds
+        span_x = max(maxx - minx, 1e-3)
+        span_y = max(maxy - miny, 1e-3)
+        vw = max(40, self.canvas_rect.w)
+        vh = max(40, self.canvas_rect.h)
+        self.zoom = clamp(
+            min(vw * (1.0 - 2 * pad_frac) / span_x,
+                vh * (1.0 - 2 * pad_frac) / span_y),
+            0.05, 35.0)
+        # world_to_screen uses (w + offset): center world point → offset=-c
+        self.view_offset_x = -(minx + maxx) * 0.5
+        self.view_offset_y = -(miny + maxy) * 0.5
+
+    def frame_all(self) -> None:
+        self.frame_bounds(self.compute_bounds())
+
+    def frame_point(self, wx: float, wy: float, zoom: Optional[float] = None) -> None:
+        if zoom is not None:
+            self.zoom = clamp(zoom, 0.05, 35.0)
+        self.view_offset_x = -wx
+        self.view_offset_y = -wy
+
+    def frame_selected(self) -> None:
+        ent = self.get_selected_entity()
+        if ent is not None:
+            ext = max(getattr(ent, "length", 2.0), getattr(ent, "width", 2.0), 4.0)
+            self.frame_bounds((ent.pos.x - ext, ent.pos.y - ext,
+                               ent.pos.x + ext, ent.pos.y + ext), 0.25)
+            return
+        if self.is_spawn_selected:
+            sp = self.road_def.spawn_point
+            self.frame_bounds((sp.x - 20, sp.y - 20, sp.x + 20, sp.y + 20), 0.2)
+            return
+        if self.selected_point_idx is not None and \
+                0 <= self.selected_point_idx < len(self.road_def.control_points):
+            cp = self.road_def.control_points[self.selected_point_idx]
+            hw = max(cp.width, 24.0)
+            self.frame_bounds((cp.x - hw, cp.y - hw, cp.x + hw, cp.y + hw), 0.25)
+
+    def _snap(self, v: float) -> float:
+        if self.snap_enabled and self.snap_step > 0:
+            return round(round(v / self.snap_step) * self.snap_step, 3)
+        return round(v, 1)
+
+    def _changed(self) -> None:
+        if self.on_change:
+            self.on_change()
+
+    # ---------------------------------------------------------- editing
+
+    def delete_selected(self) -> bool:
+        """Delete selected entity or control point. True if mutated."""
+        if self.selected_entity_id is not None:
+            ent = self.get_selected_entity()
+            if ent is not None:
+                self.entities.remove(ent)
+                self.selected_entity_id = None
+                self._changed()
+                return True
+            return False
+        if self.selected_point_idx is not None and \
+                len(self.road_def.control_points) > 3:
+            self.road_def.control_points.pop(self.selected_point_idx)
+            self.selected_point_idx = min(
+                self.selected_point_idx, len(self.road_def.control_points) - 1)
+            self._changed()
+            return True
+        return False
+
+    def deselect_all(self) -> None:
+        self.selected_point_idx = None
+        self.selected_entity_id = None
+        self.selected_checkpoint_idx = None
+        self.is_spawn_selected = False
+
+    def handle_mouse_down(self, pos: Tuple[int, int], button: int) -> bool:
         """Handles mouse clicks for selection, dragging, panning, and entity placement."""
-        sc_x, sc_y = screen_center
-        wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
+        wx, wy = self.screen_to_world(pos[0], pos[1])
 
         # 1. Middle button: Pan
         if button == 2:
@@ -108,24 +231,25 @@ class VisualTrackEditor:
         # 2. Tool placement mode (Click canvas to place entity)
         if self.active_tool and button == 1:
             if self.active_tool == "spawn":
-                self.road_def.spawn_point.x = round(wx, 1)
-                self.road_def.spawn_point.y = round(wy, 1)
+                self.road_def.spawn_point.x = self._snap(wx)
+                self.road_def.spawn_point.y = self._snap(wy)
                 self.select_spawn()
             elif self.active_tool in ("obstacle", "barrier", "cone", "traffic_sign", "traffic_light"):
                 new_ent = create_entity(
                     entity_type=self.active_tool,
-                    pos=Vec3(round(wx, 1), round(wy, 1), 0.0),
+                    pos=Vec3(self._snap(wx), self._snap(wy), 0.0),
                     yaw=0.0
                 )
                 self.entities.append(new_ent)
                 self.select_entity(new_ent.entity_id)
             self.active_tool = None
+            self._changed()
             return True
 
         # 3. Check click on placed entities
         for ent in reversed(self.entities):
             ex, ey = ent.pos.x, ent.pos.y
-            esx, esy = self.world_to_screen(ex, ey, sc_x, sc_y)
+            esx, esy = self.world_to_screen(ex, ey)
             dx = pos[0] - esx
             dy = pos[1] - esy
             hit_r = max(14, int(max(getattr(ent, 'length', 2.0), getattr(ent, 'width', 2.0)) * 0.5 * self.zoom))
@@ -139,11 +263,12 @@ class VisualTrackEditor:
                     self.entities.remove(ent)
                     if self.selected_entity_id == ent.entity_id:
                         self.selected_entity_id = None
+                    self._changed()
                     return True
 
         # 4. Check click on Spawn Point
         sp = self.road_def.spawn_point
-        sp_sx, sp_sy = self.world_to_screen(sp.x, sp.y, sc_x, sc_y)
+        sp_sx, sp_sy = self.world_to_screen(sp.x, sp.y)
         if (pos[0] - sp_sx) ** 2 + (pos[1] - sp_sy) ** 2 <= 144:
             if button == 1:
                 self.select_spawn()
@@ -151,7 +276,7 @@ class VisualTrackEditor:
 
         # 5. Check click on control points
         for i, cp in enumerate(self.road_def.control_points):
-            sx, sy = self.world_to_screen(cp.x, cp.y, sc_x, sc_y)
+            sx, sy = self.world_to_screen(cp.x, cp.y)
             dx = pos[0] - sx
             dy = pos[1] - sy
             if dx * dx + dy * dy <= 169:  # 13px radius
@@ -163,26 +288,30 @@ class VisualTrackEditor:
                     if len(self.road_def.control_points) > 3:
                         self.road_def.control_points.pop(i)
                         self.selected_point_idx = max(0, i - 1)
+                        self._changed()
                         return True
 
-        # 6. Check click on segment between control points to INSERT a point
-        if button == 1 and len(self.road_def.control_points) >= 2:
+        # 6. Draw tool: click on a segment between control points INSERTS a
+        #    point there (only when the draw tool is active — a stray click
+        #    in select mode must never create geometry)
+        if button == 1 and self.tool == "draw" and len(self.road_def.control_points) >= 2:
             cps = self.road_def.control_points
             n = len(cps)
             num_segs = n if self.road_def.is_closed else (n - 1)
             for i in range(num_segs):
                 p1 = cps[i]
                 p2 = cps[(i + 1) % n]
-                s1x, s1y = self.world_to_screen(p1.x, p1.y, sc_x, sc_y)
-                s2x, s2y = self.world_to_screen(p2.x, p2.y, sc_x, sc_y)
+                s1x, s1y = self.world_to_screen(p1.x, p1.y)
+                s2x, s2y = self.world_to_screen(p2.x, p2.y)
                 dist_to_seg = self._dist_point_to_line_segment(pos[0], pos[1], s1x, s1y, s2x, s2y)
                 if dist_to_seg < 10.0:  # Within 10 pixels of line
                     insert_idx = i + 1
                     interp_width = (p1.width + p2.width) * 0.5
-                    new_cp = ControlPoint(x=round(wx, 1), y=round(wy, 1), z=(p1.z + p2.z) * 0.5, width=interp_width)
+                    new_cp = ControlPoint(x=self._snap(wx), y=self._snap(wy), z=(p1.z + p2.z) * 0.5, width=interp_width)
                     self.road_def.control_points.insert(insert_idx, new_cp)
                     self.select_control_point(insert_idx)
                     self.is_dragging_point = True
+                    self._changed()
                     return True
 
         # 7. Right click on empty space: Pan view
@@ -192,31 +321,49 @@ class VisualTrackEditor:
             self._orig_view_offset = (self.view_offset_x, self.view_offset_y)
             return True
 
-        # 8. Left click on empty space: Append control point at clicked location
+        # 8. Left click on empty space
         if button == 1:
-            insert_idx = (self.selected_point_idx + 1) if self.selected_point_idx is not None else len(self.road_def.control_points)
-            new_cp = ControlPoint(x=round(wx, 1), y=round(wy, 1), z=0.0, width=12.0)
-            self.road_def.control_points.insert(insert_idx, new_cp)
-            self.select_control_point(insert_idx)
-            self.is_dragging_point = True
+            if self.tool == "draw":
+                # Append a control point after the selected one
+                insert_idx = (self.selected_point_idx + 1) if self.selected_point_idx is not None else len(self.road_def.control_points)
+                new_cp = ControlPoint(x=self._snap(wx), y=self._snap(wy), z=0.0, width=12.0)
+                self.road_def.control_points.insert(insert_idx, new_cp)
+                self.select_control_point(insert_idx)
+                self.is_dragging_point = True
+                self._changed()
+            else:
+                # Select tool: click empty space = deselect
+                self.deselect_all()
             return True
 
         return False
 
     def handle_mouse_up(self) -> None:
+        was_editing = (self.is_dragging_point or self.is_dragging_entity
+                       or self.is_dragging_width)
         self.is_dragging_point = False
         self.is_dragging_entity = False
         self.is_rotating_entity = False
         self.is_dragging_width = False
         self.is_panning = False
+        if was_editing:
+            self._changed()  # committed drag → history/dirty hook
 
-    def handle_mouse_wheel(self, y_offset: int) -> None:
+    def handle_mouse_wheel(self, y_offset: int,
+                           pos: Optional[Tuple[int, int]] = None) -> None:
+        """Zoom anchored at the cursor (or canvas center)."""
         factor = 1.15 if y_offset > 0 else (1.0 / 1.15)
-        self.zoom = clamp(self.zoom * factor, 0.5, 35.0)
+        ax, ay = pos if pos else (self.canvas_rect.centerx,
+                                  self.canvas_rect.centery)
+        wx, wy = self.screen_to_world(ax, ay)
+        self.zoom = clamp(self.zoom * factor, 0.05, 60.0)
+        # keep the world point under the cursor fixed:
+        #   w = (s - c)/z - o  ⇒  o = (s - c)/z - w
+        cx, cy = self._center()
+        self.view_offset_x = (ax - cx) / self.zoom - wx
+        self.view_offset_y = -(ay - cy) / self.zoom - wy
 
-    def handle_mouse_move(self, pos: Tuple[int, int], screen_center: Tuple[float, float]) -> None:
-        sc_x, sc_y = screen_center
-
+    def handle_mouse_move(self, pos: Tuple[int, int]) -> None:
         if self.is_panning:
             dx = (pos[0] - self._pan_start[0]) / self.zoom
             dy = -(pos[1] - self._pan_start[1]) / self.zoom
@@ -225,16 +372,16 @@ class VisualTrackEditor:
 
         elif self.is_dragging_point and self.selected_point_idx is not None:
             if 0 <= self.selected_point_idx < len(self.road_def.control_points):
-                wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
-                self.road_def.control_points[self.selected_point_idx].x = round(wx, 1)
-                self.road_def.control_points[self.selected_point_idx].y = round(wy, 1)
+                wx, wy = self.screen_to_world(pos[0], pos[1])
+                self.road_def.control_points[self.selected_point_idx].x = self._snap(wx)
+                self.road_def.control_points[self.selected_point_idx].y = self._snap(wy)
 
         elif self.is_dragging_entity and self.selected_entity_id is not None:
             ent = self.get_selected_entity()
             if ent:
-                wx, wy = self.screen_to_world(pos[0], pos[1], sc_x, sc_y)
-                ent.pos.x = round(wx, 1)
-                ent.pos.y = round(wy, 1)
+                wx, wy = self.screen_to_world(pos[0], pos[1])
+                ent.pos.x = self._snap(wx)
+                ent.pos.y = self._snap(wy)
 
     def _dist_point_to_line_segment(self, px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
         dx = x2 - x1
@@ -256,8 +403,9 @@ class VisualTrackEditor:
         checkpoints: Optional[List[Dict[str, Any]]] = None
     ) -> None:
         """Renders comprehensive 2D top-down track geometry, visual gizmos, and entities."""
-        sc_x = screen_rect.centerx
-        sc_y = screen_rect.centery
+        self.canvas_rect = screen_rect
+        sc_x, sc_y = self._center()
+        surface.set_clip(screen_rect)
 
         # 1. Background Grid Lines
         if self.show_grid:
@@ -281,7 +429,7 @@ class VisualTrackEditor:
             curvatures = []
 
             for i, s in enumerate(samples):
-                sx, sy = self.world_to_screen(s.pos.x, s.pos.y, sc_x, sc_y)
+                sx, sy = self.world_to_screen(s.pos.x, s.pos.y)
                 pts_center.append((sx, sy))
 
                 half_w = s.width * 0.5
@@ -289,8 +437,8 @@ class VisualTrackEditor:
                 ly = s.pos.y + s.normal.y * half_w
                 rx = s.pos.x - s.normal.x * half_w
                 ry = s.pos.y - s.normal.y * half_w
-                pts_left.append(self.world_to_screen(lx, ly, sc_x, sc_y))
-                pts_right.append(self.world_to_screen(rx, ry, sc_x, sc_y))
+                pts_left.append(self.world_to_screen(lx, ly))
+                pts_right.append(self.world_to_screen(rx, ry))
 
                 # Curvature estimate: rate of heading change
                 next_s = samples[(i + 1) % m]
@@ -338,8 +486,8 @@ class VisualTrackEditor:
             for cp in checkpoints:
                 gl = cp['gate_left']
                 gr = cp['gate_right']
-                slx, sly = self.world_to_screen(gl.x, gl.y, sc_x, sc_y)
-                srx, sry = self.world_to_screen(gr.x, gr.y, sc_x, sc_y)
+                slx, sly = self.world_to_screen(gl.x, gl.y)
+                srx, sry = self.world_to_screen(gr.x, gr.y)
 
                 is_start = (cp['index'] == 0)
                 cp_color = (0, 255, 180) if is_start else (70, 190, 130, 180)
@@ -348,7 +496,7 @@ class VisualTrackEditor:
                 c_pos = cp.get('pos')
                 c_tan = cp.get('tangent')
                 if c_pos and c_tan:
-                    cx, cy = self.world_to_screen(c_pos.x, c_pos.y, sc_x, sc_y)
+                    cx, cy = self.world_to_screen(c_pos.x, c_pos.y)
                     arr_len = 16
                     tan_2d = Vec2(c_tan.x, c_tan.y).normalized()
                     ax = int(cx + tan_2d.x * arr_len)
@@ -362,13 +510,13 @@ class VisualTrackEditor:
         # 4. Connecting Reference Lines Between Control Points
         cp_screen_pts = []
         for cp in self.road_def.control_points:
-            cp_screen_pts.append(self.world_to_screen(cp.x, cp.y, sc_x, sc_y))
+            cp_screen_pts.append(self.world_to_screen(cp.x, cp.y))
         if len(cp_screen_pts) > 1:
             pygame.draw.lines(surface, (70, 110, 170, 70), self.road_def.is_closed, cp_screen_pts, 1)
 
         # 5. Render Placed World Entities
         for ent in self.entities:
-            self._draw_entity_gizmo(surface, ent, sc_x, sc_y, font)
+            self._draw_entity_gizmo(surface, ent, font)
 
         # 6. Render Control Points & Visual Handles
         for i, cp in enumerate(self.road_def.control_points):
@@ -403,7 +551,7 @@ class VisualTrackEditor:
 
         # 7. Render Spawn Point Indicator
         sp = self.road_def.spawn_point
-        spx, spy = self.world_to_screen(sp.x, sp.y, sc_x, sc_y)
+        spx, spy = self.world_to_screen(sp.x, sp.y)
         is_sp_sel = self.is_spawn_selected
 
         col_sp = (0, 255, 120)
@@ -438,16 +586,16 @@ class VisualTrackEditor:
             hint = font.render(f">> CLICK CANVAS TO PLACE: {tool_name} (ESC to cancel) <<", True, (255, 220, 0))
             surface.blit(hint, (sc_x - hint.get_width() // 2, screen_rect.top + 16))
 
+        surface.set_clip(None)
+
     def _draw_entity_gizmo(
         self,
         surface: pygame.Surface,
         ent: WorldEntity,
-        sc_x: float,
-        sc_y: float,
         font: pygame.font.Font
     ) -> None:
         """Draws individual environment entity icon and collision footprint."""
-        sx, sy = self.world_to_screen(ent.pos.x, ent.pos.y, sc_x, sc_y)
+        sx, sy = self.world_to_screen(ent.pos.x, ent.pos.y)
         is_sel = (ent.entity_id == self.selected_entity_id)
 
         # Highlight ring if selected
