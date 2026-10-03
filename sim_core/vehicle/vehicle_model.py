@@ -99,7 +99,9 @@ class VehicleModel:
         st = self.state
 
         # 1. Steering rate limiting
-        target_steer = clamp(steering_cmd, -1.0, 1.0) * cfg.max_steering_angle
+        # Convention: steering_cmd in [-1.0, 1.0] where negative = left, positive = right.
+        # In counter-clockwise Cartesian coordinates, turning left corresponds to positive steer/yaw.
+        target_steer = -clamp(steering_cmd, -1.0, 1.0) * cfg.max_steering_angle
         steer_diff = target_steer - st.steering_angle
         max_delta = cfg.steering_rate * dt
         st.steering_angle += clamp(steer_diff, -max_delta, max_delta)

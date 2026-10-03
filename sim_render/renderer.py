@@ -34,7 +34,6 @@ class SimulationRenderer3D:
 
         # OpenGL states
         self.ctx.enable(moderngl.DEPTH_TEST)
-        self.ctx.enable(moderngl.CULL_FACE)
         self.ctx.enable(moderngl.BLEND)
 
         # Compile shaders

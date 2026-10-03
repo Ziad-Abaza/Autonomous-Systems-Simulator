@@ -23,7 +23,8 @@ class CheckpointTracker:
         self.best_lap_time: float = float('inf')
 
     def reset(self, start_time: float = 0.0) -> None:
-        self.current_index = 0
+        num_cp = len(self.track.checkpoints)
+        self.current_index = 1 if num_cp > 1 else 0
         self.laps_completed = 0
         self.total_checkpoints_passed = 0
         self.last_cross_time = start_time
@@ -39,7 +40,8 @@ class CheckpointTracker:
             return False, False
 
         num_cp = len(self.track.checkpoints)
-        target_cp = self.track.checkpoints[self.current_index % num_cp]
+        target_idx = self.current_index % num_cp
+        target_cp = self.track.checkpoints[target_idx]
 
         gate_left = target_cp['gate_left']
         gate_right = target_cp['gate_right']
@@ -49,11 +51,9 @@ class CheckpointTracker:
             # Passed target checkpoint!
             self.total_checkpoints_passed += 1
             self.last_cross_time = current_time
-            self.current_index += 1
 
             lap_completed = False
-            if self.current_index >= num_cp:
-                self.current_index = 0
+            if target_idx == 0:
                 self.laps_completed += 1
                 lap_completed = True
                 self.last_lap_time = current_time - self.lap_start_time
@@ -61,6 +61,7 @@ class CheckpointTracker:
                 if self.last_lap_time < self.best_lap_time:
                     self.best_lap_time = self.last_lap_time
 
+            self.current_index = (target_idx + 1) % num_cp
             return True, lap_completed
 
         return False, False
@@ -68,6 +69,7 @@ class CheckpointTracker:
     def get_progress_fraction(self) -> float:
         """Fraction of current lap completed [0.0, 1.0]."""
         num_cp = len(self.track.checkpoints)
-        if num_cp == 0:
+        if num_cp <= 1:
             return 0.0
-        return (self.current_index % num_cp) / float(num_cp)
+        completed = (self.current_index - 1) % num_cp
+        return completed / float(num_cp)

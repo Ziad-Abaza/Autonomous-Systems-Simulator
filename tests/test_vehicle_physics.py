@@ -42,12 +42,20 @@ def test_vehicle_turning_and_yaw():
     car.reset(pos=Vec3(0, 0, 0), yaw=0.0, initial_speed=10.0)
 
     dt = 1.0 / 60.0
-    # Steer left (positive yaw in standard coordinates or negative depending on convention)
+    # Steer left (negative cmd -> positive yaw / +Y deviation)
     for _ in range(60):
         car.step(steering_cmd=-0.6, throttle_cmd=0.5, brake_cmd=0.0, dt=dt)
 
-    assert abs(car.state.yaw) > 0.05, "Car yaw should change when steering"
-    assert abs(car.state.pos.y) > 0.5, "Car should deviate laterally when steering"
+    assert car.state.yaw > 0.05, "Steer left should produce positive yaw angle"
+    assert car.state.pos.y > 0.5, "Steer left should produce positive lateral displacement (+Y)"
+
+    # Reset and steer right (positive cmd -> negative yaw / -Y deviation)
+    car.reset(pos=Vec3(0, 0, 0), yaw=0.0, initial_speed=10.0)
+    for _ in range(60):
+        car.step(steering_cmd=0.6, throttle_cmd=0.5, brake_cmd=0.0, dt=dt)
+
+    assert car.state.yaw < -0.05, "Steer right should produce negative yaw angle"
+    assert car.state.pos.y < -0.5, "Steer right should produce negative lateral displacement (-Y)"
 
 
 def test_vehicle_obb_and_wheels():

@@ -112,7 +112,11 @@ class TrackSpline:
                 dense_widths.append(w)
                 dense_bankings.append(b)
 
-        if not self.is_closed:
+        if self.is_closed:
+            dense_positions.append(dense_positions[0])
+            dense_widths.append(dense_widths[0])
+            dense_bankings.append(dense_bankings[0])
+        else:
             dense_positions.append(raw_pts[-1])
             dense_widths.append(widths[-1])
             dense_bankings.append(bankings[-1])
