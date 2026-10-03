@@ -24,7 +24,7 @@ def ctx():
 def _frame(ctx, draw_fn):
     ctx.begin_frame()
     draw_fn()
-    ctx.begin_frame()  # promote to dispatch registry
+    # dispatch reads the current frame's regions — no promotion needed
 
 
 class TestDispatch:

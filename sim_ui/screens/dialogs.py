@@ -102,6 +102,27 @@ def draw_new_track(ctx: UIContext, w: int, h: int,
            "Cancel", "dlg_cancel:new")
 
 
+def draw_rename(ctx: UIContext, w: int, h: int,
+                current_name: str, thing: str = "Track") -> None:
+    """Generic rename dialog. Emits dlg_confirm:rename with {name}."""
+    _scrim(ctx, w, h)
+    rect = _dialog_box(ctx, w, h, 440, 180, f"Rename {thing}")
+    y = rect.y + 48
+    _draw_text(ctx, ctx.fonts.caption, "NAME", T.C.text_dim,
+               rect.x + 16, y)
+    y += 16
+    text_input(ctx, "rn_name", pygame.Rect(rect.x + 16, y, rect.w - 32, 30),
+               placeholder=current_name)
+    bw = 120
+    by = rect.bottom - 44
+    name = ctx.inputs.get("rn_name", {}).get("text", "").strip()
+    button(ctx, pygame.Rect(rect.right - bw - 14, by, bw, 30),
+           "Rename", "dlg_confirm:rename",
+           payload={"name": name}, style="primary", enabled=bool(name))
+    button(ctx, pygame.Rect(rect.right - 2 * bw - 22, by, bw, 30),
+           "Cancel", "dlg_cancel:rename")
+
+
 def draw_recording(ctx: UIContext, w: int, h: int,
                    dest_dir: str, default_name: str) -> None:
     """Recording setup dialog: destination + name + start."""
@@ -141,15 +162,15 @@ def draw_recording(ctx: UIContext, w: int, h: int,
 
 def draw_recording_summary(ctx: UIContext, w: int, h: int,
                            summary: Dict[str, Any]) -> None:
-    """Post-stop recording summary."""
+    """Post-stop recording summary with next-step actions."""
     _scrim(ctx, w, h)
-    rect = _dialog_box(ctx, w, h, 460, 240, "Recording Saved")
+    rect = _dialog_box(ctx, w, h, 520, 250, "Recording Saved")
     rows = [
         ("Steps", str(summary.get("steps", 0))),
         ("Duration", f"{summary.get('duration_s', 0):.1f} s"),
         ("Return", f"{summary.get('total_return', 0.0):+.2f}"),
         ("Termination", str(summary.get("termination", "—"))),
-        ("File", str(summary.get("path", ""))),
+        ("Saved to", str(summary.get("path", ""))),
     ]
     y = rect.y + 46
     for k, v in rows:
@@ -157,10 +178,18 @@ def draw_recording_summary(ctx: UIContext, w: int, h: int,
         _draw_text(ctx, ctx.fonts.small, v, T.C.text,
                    rect.x + 130, y, max_w=rect.w - 150)
         y += 22
-    bw = 130
-    by = rect.bottom - 44
-    button(ctx, pygame.Rect(rect.right - bw - 14, by, bw, 30),
-           "Open Folder", "dlg_confirm:rec_open_folder",
+    by = rect.bottom - 46
+    bw = 120
+    x = rect.x + 14
+    button(ctx, pygame.Rect(x, by, bw, 30),
+           "View Replay", "dlg_confirm:rec_view_replay",
+           payload=summary.get("path"), style="primary")
+    x += bw + 8
+    button(ctx, pygame.Rect(x, by, bw + 12, 30),
+           "Record Again", "dlg_confirm:rec_again")
+    x += bw + 20
+    button(ctx, pygame.Rect(x, by, bw + 8, 30),
+           "Show in Folder", "dlg_confirm:rec_open_folder",
            payload=summary.get("path"))
-    button(ctx, pygame.Rect(rect.right - 2 * bw - 22, by, bw, 30),
-           "Close", "dlg_cancel:rec_summary")
+    button(ctx, pygame.Rect(rect.right - 74, by, 60, 30),
+           "Done", "dlg_cancel:rec_summary")

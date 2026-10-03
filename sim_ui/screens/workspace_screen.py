@@ -15,6 +15,7 @@ their place.
 """
 from __future__ import annotations
 import os
+import time
 from typing import Any, Optional, Tuple
 
 import pygame
@@ -207,11 +208,12 @@ class WorkspaceScreen:
         _draw_text(ctx, ctx.fonts.caption, hint, T.C.text_faint,
                    r.right - ctx.fonts.caption.size(hint)[0] - 10,
                    r.centery - 6)
-        dirty = "● modified" if app.dirty else "saved"
-        _draw_text(ctx, ctx.fonts.caption, dirty,
-                   T.C.warn if app.dirty else T.C.ok,
-                   r.right - ctx.fonts.caption.size(hint)[0] - 96,
-                   r.centery - 6)
+        if app.ws_tab != "DATA":
+            dirty = "● modified" if app.dirty else "saved"
+            _draw_text(ctx, ctx.fonts.caption, dirty,
+                       T.C.warn if app.dirty else T.C.ok,
+                       r.right - ctx.fonts.caption.size(hint)[0] - 96,
+                       r.centery - 6)
 
     # ----------------------------------------------------------------- replay
 
@@ -258,23 +260,49 @@ class WorkspaceScreen:
             return
         area = pygame.Rect(x0, y, min(520, body.w - 80),
                            body.bottom - y - 40)
-        content_h = len(entries) * 40 + 8
+        content_h = len(entries) * 44 + 8
         off = scroll_begin(ctx, "rp_list", area, content_h)
+        import json as _json
         for i, (name, path) in enumerate(entries):
-            r = pygame.Rect(area.x, area.y + i * 40 - off, area.w - 6, 36)
+            r = pygame.Rect(area.x, area.y + i * 44 - off, area.w - 6, 40)
             if r.bottom < area.top or r.top > area.bottom:
                 continue
-            list_row(ctx, r, name, "rp_open", path)
+            # per-episode manifest → human-readable subtitle
+            sec = ""
+            try:
+                man_path = os.path.join(os.path.dirname(path),
+                                        "manifest.json")
+                if os.path.exists(man_path):
+                    with open(man_path, "r", encoding="utf-8") as f:
+                        man = _json.load(f)
+                    sec = (f"{man.get('track_name','?')} · "
+                           f"{man.get('steps', 0)} steps")
+                    name = man.get("name", name)
+            except Exception:
+                pass
+            if not sec:
+                sec = "episode.json"
+            right = time.strftime("%m-%d %H:%M",
+                                  time.localtime(os.path.getmtime(path)))
+            list_row(ctx, r, name, "rp_open", path, secondary=sec,
+                     right=right)
         scroll_end(ctx, "rp_list", area)
 
     def _draw_replay_player(self, ctx: UIContext, body: pygame.Rect) -> None:
         app = self.app
         player = app.replay_player
-        # info chip top-left of viewport
+        # info chip top-left of viewport: name · track · time · frame
         meta = player.metadata
-        info = (f"{meta.get('track_name','?')} · "
-                f"{player.current_frame_idx + 1}/{player.total_frames} · "
-                f"{player.playback_speed:.1f}×")
+        cur_t = 0.0
+        dur = 0.0
+        if player.frames:
+            cur_t = player.frames[player.current_frame_idx].get("t", 0.0)
+            dur = player.frames[-1].get("t", 0.0)
+        info = (f"{os.path.basename(app.replay_path) if app.replay_path else meta.get('track_name','Recording')}"
+                f"  ·  {meta.get('track_name','?')}"
+                f"  ·  {cur_t:.1f}s / {dur:.1f}s"
+                f"  ·  {player.current_frame_idx + 1}/{player.total_frames}"
+                f"  ·  {player.playback_speed:.1f}x")
         _draw_text(ctx, ctx.fonts.small, info, T.C.text, 16, body.y + 12)
 
         # bottom transport bar
@@ -366,6 +394,8 @@ class WorkspaceScreen:
             app.dataset_detail = payload
         elif action == "ds_open_folder":
             app.reveal_in_folder(payload)
+        elif action == "ds_view_replay":
+            app.load_replay(payload)
         elif action == "ds_delete":
             app.active_dialog = "confirm_del_ds"
             app.dialog_payload = {"path": payload,

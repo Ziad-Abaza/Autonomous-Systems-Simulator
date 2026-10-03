@@ -70,15 +70,17 @@ def scan_datasets(roots: List[str]) -> List[Dict[str, Any]]:
                 except (OSError, json.JSONDecodeError):
                     m = {}
                 seen.add(dirpath)
+                is_recording = m.get("kind") == "episode_recording"
                 found.append({
-                    "kind": "dataset",
+                    "kind": "recording" if is_recording else "dataset",
                     "path": dirpath,
-                    "name": os.path.basename(dirpath),
+                    "name": m.get("name") or os.path.basename(dirpath),
                     "format": m.get("dataset_format", "transitions_v1"),
-                    "episodes": m.get("episodes"),
+                    "episodes": 1 if is_recording else m.get("episodes"),
                     "steps": m.get("steps"),
                     "env_name": (m.get("env") or {}).get("name")
-                                or m.get("environment_name", ""),
+                                or m.get("environment_name")
+                                or m.get("track_name", ""),
                     "run_id": m.get("run_id", ""),
                     "experiment_id": m.get("experiment_id", ""),
                     "size": _dir_size(dirpath),
@@ -130,25 +132,40 @@ def draw_datasets_browser(ctx: UIContext, body: pygame.Rect, app) -> None:
     detail_w = body.right - detail_x - 24
 
     area = pygame.Rect(x0, y0 + 56, list_w, body.bottom - y0 - 70)
-    content_h = len(datasets) * 48 + 8
+    recs = [d for d in datasets if d["kind"] == "recording"]
+    dss = [d for d in datasets if d["kind"] == "dataset"]
+    sections = (("EPISODE RECORDINGS", recs), ("TRAINING DATASETS", dss))
+    content_h = sum(len(g) * 48 + 28 for _, g in sections) + 8
     off = scroll_begin(ctx, "ds_list", area, content_h)
     if not datasets:
         _draw_text(ctx, ctx.fonts.body,
-                   "No datasets found. Record an episode or export a "
-                   "run's dataset to populate this view.",
+                   "Nothing here yet — record an episode in SIMULATE or "
+                   "export a training run's dataset.",
                    T.C.text_faint, area.x + 8, area.y + 16, max_w=area.w - 40)
-    for i, d in enumerate(datasets):
-        r = pygame.Rect(area.x, area.y + i * 48 - off, area.w - 6, 44)
-        if r.bottom < area.top or r.top > area.bottom:
+    yy = 0
+    for title, group in sections:
+        if not group:
             continue
-        sel = getattr(app, "dataset_detail", None) == d["path"]
-        icon = "DS" if d["kind"] == "dataset" else "REC"
-        sec = (f"{icon} · {d.get('episodes') or '?'} eps · "
-               f"{d.get('steps') or '?'} steps · {format_bytes(d['size'])}")
-        list_row(ctx, r, d["name"], "ds_select", d["path"],
-                 secondary=sec, selected=sel,
-                 right=time.strftime("%m-%d %H:%M",
-                                     time.localtime(d["modified"])))
+        r = pygame.Rect(area.x, area.y + yy - off, area.w - 6, 22)
+        if area.top <= r.bottom and r.top <= area.bottom:
+            _draw_text(ctx, ctx.fonts.caption, title, T.C.text_faint,
+                       r.x + 2, r.y + 4)
+        yy += 28
+        for d in group:
+            r = pygame.Rect(area.x, area.y + yy - off, area.w - 6, 44)
+            yy += 48
+            if r.bottom < area.top or r.top > area.bottom:
+                continue
+            sel = getattr(app, "dataset_detail", None) == d["path"]
+            kind_lbl = ("Dataset" if d["kind"] == "dataset"
+                        else "Recording")
+            sec = (f"{kind_lbl} · {d.get('episodes') or '?'} eps · "
+                   f"{d.get('steps') or '?'} steps · "
+                   f"{format_bytes(d['size'])}")
+            list_row(ctx, r, d["name"], "ds_select", d["path"],
+                     secondary=sec, selected=sel,
+                     right=time.strftime("%m-%d %H:%M",
+                                         time.localtime(d["modified"])))
     scroll_end(ctx, "ds_list", area)
 
     # detail pane
@@ -210,10 +227,19 @@ def _draw_dataset_detail(ctx: UIContext, app, x: int, y: int, w: int) -> None:
         yy += 24
 
     by = rect.bottom - 40
-    button(ctx, pygame.Rect(rect.x + 12, by, 120, 28),
+    # recordings can be opened directly in the replay player
+    ep_file = os.path.join(path, "episode.json")
+    if os.path.exists(ep_file):
+        button(ctx, pygame.Rect(rect.x + 12, by, 110, 28),
+               "View Replay", "ds_view_replay", ep_file,
+               style="primary")
+        x_btn = rect.x + 130
+    else:
+        x_btn = rect.x + 12
+    button(ctx, pygame.Rect(x_btn, by, 120, 28),
            "Open Folder", "ds_open_folder", path)
     if rep:
-        button(ctx, pygame.Rect(rect.x + 140, by, 110, 28),
+        button(ctx, pygame.Rect(x_btn + 128, by, 110, 28),
                "Open Source", "ds_open_source", path)
     button(ctx, pygame.Rect(rect.right - 92, by, 80, 28),
            "Delete…", "ds_delete", path, style="danger")

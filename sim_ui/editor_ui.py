@@ -243,8 +243,14 @@ class EditorUI:
                  "small": ur.font_small, "mono": ur.font_mono}
         buttons = self.app.inspector.draw(ctx.surface, r.x, r.y, r.w, r.h,
                                           fonts)
+        insp = self.app.inspector
         for rect, action_id in buttons:
-            ctx.hit(rect, action_id)
+            tip = None
+            if action_id.startswith("tab_"):
+                tab = action_id[4:]
+                tip = insp.TAB_TOOLTIPS.get(tab) or \
+                    insp.TAB_LABELS.get(tab, tab).title() + " settings"
+            ctx.hit(rect, action_id, tooltip=tip)
 
     # ---------------------------------------------------------- status
 

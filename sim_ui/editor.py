@@ -14,6 +14,7 @@ from sim_core.world.entity import (
     TrafficSign, TrafficLight, create_entity
 )
 from sim_core.math_utils import Vec2, Vec3, clamp, normalize_angle
+from sim_ui import theme as T
 
 
 class VisualTrackEditor:
@@ -461,11 +462,11 @@ class VisualTrackEditor:
                     p1 = pts_center[i]
                     p2 = pts_center[(i + 1) % m]
                     if not self.show_curvature or k < 0.02:
-                        color = (0, 220, 255)  # Gentle / Straight
+                        color = T.C.vx_centerline
                     elif k < 0.05:
-                        color = (255, 200, 40)  # Moderate corner
+                        color = T.C.vx_curv_mid
                     else:
-                        color = (255, 60, 60)   # Sharp turn / Hairpin
+                        color = T.C.vx_curv_high
                     pygame.draw.line(surface, color, p1, p2, 2)
 
                 # Centerline Direction Arrows (Chevrons) every ~20 samples
@@ -479,7 +480,7 @@ class VisualTrackEditor:
                         arr_len = max(8, min(20, arr_len))
                         ax = int(cx + tan.x * arr_len)
                         ay = int(cy - tan.y * arr_len)
-                        pygame.draw.line(surface, (0, 255, 200), (cx, cy), (ax, ay), 2)
+                        pygame.draw.line(surface, T.C.vx_checkpoint, (cx, cy), (ax, ay), 2)
 
         # 3. Checkpoints Gates Gizmo
         if checkpoints:
@@ -490,7 +491,7 @@ class VisualTrackEditor:
                 srx, sry = self.world_to_screen(gr.x, gr.y)
 
                 is_start = (cp['index'] == 0)
-                cp_color = (0, 255, 180) if is_start else (70, 190, 130, 180)
+                cp_color = T.C.vx_spawn if is_start else T.C.vx_checkpoint
                 pygame.draw.line(surface, cp_color, (slx, sly), (srx, sry), 2 if not is_start else 3)
 
                 c_pos = cp.get('pos')
@@ -528,12 +529,12 @@ class VisualTrackEditor:
 
             # Outer ring
             pygame.draw.circle(surface, color, (sx, sy), radius)
-            pygame.draw.circle(surface, (255, 255, 255), (sx, sy), radius, 2)
+            pygame.draw.circle(surface, T.C.vx_boundary, (sx, sy), radius, 2)
 
             # Selected Control Point: Width handles & Banking badge
             if is_sel and self.show_width_handles:
                 # Selection indicator ring
-                pygame.draw.circle(surface, (255, 220, 0), (sx, sy), radius + 5, 1)
+                pygame.draw.circle(surface, T.C.selection, (sx, sy), radius + 5, 1)
 
                 # Road width preview circle
                 w_pixels = int(cp.width * 0.5 * self.zoom)
@@ -543,10 +544,10 @@ class VisualTrackEditor:
                 elev_str = f"Z: {cp.z:+.1f}m" if cp.z != 0 else ""
                 bank_str = f"Bank: {cp.banking:+.0f}°" if cp.banking != 0 else ""
                 badge_text = f"P{i} ({cp.width:.1f}m) {elev_str} {bank_str}".strip()
-                lbl = font.render(badge_text, True, (255, 240, 150))
+                lbl = font.render(badge_text, True, T.C.selection)
                 surface.blit(lbl, (sx + 12, sy - 14))
             else:
-                lbl = font.render(f"P{i}", True, (220, 225, 235))
+                lbl = font.render(f"P{i}", True, T.C.text_dim)
                 surface.blit(lbl, (sx + 10, sy - 10))
 
         # 7. Render Spawn Point Indicator
@@ -554,10 +555,10 @@ class VisualTrackEditor:
         spx, spy = self.world_to_screen(sp.x, sp.y)
         is_sp_sel = self.is_spawn_selected
 
-        col_sp = (0, 255, 120)
+        col_sp = T.C.vx_spawn
         pygame.draw.circle(surface, col_sp, (spx, spy), 9)
         if is_sp_sel:
-            pygame.draw.circle(surface, (255, 220, 0), (spx, spy), 14, 2)
+            pygame.draw.circle(surface, T.C.selection, (spx, spy), 14, 2)
 
         # Vehicle footprint box preview (4.5m x 1.8m)
         v_hl = 2.25 * self.zoom
@@ -578,12 +579,12 @@ class VisualTrackEditor:
         ay = int(spy - math.sin(sp.yaw) * arrow_len)
         pygame.draw.line(surface, col_sp, (spx, spy), (ax, ay), 3)
         lbl_sp = font.render(f"SPAWN ({math.degrees(sp.yaw):.0f}°)", True, col_sp)
-        surface.blit(lbl_sp, (spx + 14, spy - 10))
+        surface.blit(lbl_sp, (spx + 14, spy - 24))
 
         # 8. Active Tool Banner
         if self.active_tool:
             tool_name = self.active_tool.replace('_', ' ').upper()
-            hint = font.render(f">> CLICK CANVAS TO PLACE: {tool_name} (ESC to cancel) <<", True, (255, 220, 0))
+            hint = font.render(f">> CLICK CANVAS TO PLACE: {tool_name} (ESC to cancel) <<", True, T.C.warn)
             surface.blit(hint, (sc_x - hint.get_width() // 2, screen_rect.top + 16))
 
         surface.set_clip(None)
@@ -600,7 +601,7 @@ class VisualTrackEditor:
 
         # Highlight ring if selected
         if is_sel:
-            pygame.draw.circle(surface, (255, 220, 0), (sx, sy), 18, 2)
+            pygame.draw.circle(surface, T.C.selection, (sx, sy), 18, 2)
 
         cos_y = math.cos(ent.yaw)
         sin_y = math.sin(ent.yaw)
@@ -617,15 +618,15 @@ class VisualTrackEditor:
             ]
             fill_col = (180, 50, 50) if isinstance(ent, StaticObstacle) else (110, 130, 150)
             pygame.draw.polygon(surface, fill_col, [(int(x), int(y)) for x, y in corners])
-            pygame.draw.polygon(surface, (255, 255, 255), [(int(x), int(y)) for x, y in corners], 2)
-            lbl = font.render(ent.name, True, (240, 240, 240))
+            pygame.draw.polygon(surface, T.C.vx_boundary, [(int(x), int(y)) for x, y in corners], 2)
+            lbl = font.render(ent.name, True, T.C.text)
             surface.blit(lbl, (sx + 10, sy - 8))
 
         elif isinstance(ent, TrafficCone):
             r_px = max(4, int(ent.radius * self.zoom))
             pygame.draw.circle(surface, (255, 120, 0), (sx, sy), r_px)
-            pygame.draw.circle(surface, (255, 255, 255), (sx, sy), max(2, r_px // 2), 1)
-            lbl = font.render("CONE", True, (255, 160, 50))
+            pygame.draw.circle(surface, T.C.vx_boundary, (sx, sy), max(2, r_px // 2), 1)
+            lbl = font.render("CONE", True, T.C.warn)
             surface.blit(lbl, (sx + 8, sy - 8))
 
         elif isinstance(ent, TrafficSign):
@@ -634,8 +635,8 @@ class VisualTrackEditor:
             diamond = [(sx, sy - r), (sx + r, sy), (sx, sy + r), (sx - r, sy)]
             col = (220, 40, 40) if "stop" in ent.sign_type else (230, 190, 20)
             pygame.draw.polygon(surface, col, diamond)
-            pygame.draw.polygon(surface, (255, 255, 255), diamond, 2)
-            lbl = font.render(ent.sign_type.upper(), True, (255, 255, 255))
+            pygame.draw.polygon(surface, T.C.vx_boundary, diamond, 2)
+            lbl = font.render(ent.sign_type.upper(), True, T.C.text)
             surface.blit(lbl, (sx + 12, sy - 8))
 
         elif isinstance(ent, TrafficLight):
@@ -649,6 +650,6 @@ class VisualTrackEditor:
             surface.blit(lbl, (sx + 12, sy - 8))
 
         else:
-            pygame.draw.circle(surface, (150, 150, 200), (sx, sy), 8)
-            lbl = font.render(ent.name, True, (200, 200, 220))
+            pygame.draw.circle(surface, T.C.vx_boundary, (sx, sy), 8)
+            lbl = font.render(ent.name, True, T.C.text)
             surface.blit(lbl, (sx + 10, sy - 8))

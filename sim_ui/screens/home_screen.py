@@ -125,6 +125,9 @@ class HomeScreen:
                                  f"Permanently delete “{d.get('name','')}”?",
                                  confirm_label="Delete", danger=True,
                                  detail=d.get("path", ""))
+        elif self.app.active_dialog == "rename":
+            d = self.app.dialog_payload or {}
+            dialogs.draw_rename(ctx, w, h, d.get("name", "Track"))
 
     # ------------------------------------------------------------ tracks
 
@@ -202,6 +205,15 @@ class HomeScreen:
 
         _draw_text(ctx, ctx.fonts.bold, a.name, T.C.text,
                    r.x + 10, tr.bottom + 6, max_w=r.w - 60)
+        # open-document indicator: the card whose file is loaded shows a
+        # marker; unsaved changes show a dirty dot
+        app = self.app
+        if (getattr(app, "studio_screen", None) == "workspace"
+                and getattr(app.project, "file_path", None) == a.path):
+            tag = "● unsaved" if app.dirty else "open"
+            _draw_text(ctx, ctx.fonts.caption, tag,
+                       T.C.warn if app.dirty else T.C.info,
+                       r.right - 60, tr.bottom + 10)
         meta = (f"{a.point_count} pts · {a.entity_count} ent · "
                 f"{a.length_m:.0f} m · v{a.env_version}")
         _draw_text(ctx, ctx.fonts.caption, meta, T.C.text_dim,
@@ -224,6 +236,7 @@ class HomeScreen:
                   pygame.Rect(r.right - 26, r.bottom - 34, 22, 26),
                   [("Open", "m_open", a.path),
                    ("Favorite" if not a.favorite else "Unfavorite", "m_fav", a.path),
+                   ("Rename…", "m_rename", a.path),
                    ("Duplicate", "m_dup", a.path),
                    ("Reveal in Folder", "m_reveal", a.path),
                    ("Delete…", "m_del", a.path)])
@@ -362,6 +375,14 @@ class HomeScreen:
             self.invalidate_thumbs()
         elif action == "m_reveal":
             app.reveal_in_folder(payload)
+        elif action == "m_rename":
+            a = next((x for x in app.library.scan() if x.path == payload),
+                     None)
+            app.active_dialog = "rename"
+            app.dialog_payload = {"path": payload,
+                                  "name": a.name if a else ""}
+            app.ui_ctx.inputs["rn_name"] = {
+                "text": a.name if a else "", "caret": len(a.name) if a else 0}
         elif action == "m_del":
             a = next((x for x in app.library.scan() if x.path == payload), None)
             app.active_dialog = "confirm_delete"

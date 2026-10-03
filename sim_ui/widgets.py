@@ -72,7 +72,7 @@ class UIContext:
         # hit registry for the frame being built (draw pass)
         self.regions: List[Dict[str, Any]] = []
         # registry snapshot used for dispatch (previous completed frame)
-        self._dispatch_regions: List[Dict[str, Any]] = []
+        self._dispatch_regions: List[Dict[str, Any]] = []  # unused (legacy)
 
         self.z = self.Z_BASE
         self._clip_stack: List[Optional[pygame.Rect]] = []
@@ -91,7 +91,10 @@ class UIContext:
     # ---- frame lifecycle ----
 
     def begin_frame(self) -> None:
-        self._dispatch_regions = self.regions
+        # Regions are rebuilt every frame; dispatch always uses the last
+        # *completed* frame's list (events are processed between renders,
+        # never mid-draw), so a separate snapshot would lag one frame
+        # behind what is actually on screen.
         self.regions = []
         self.z = self.Z_BASE
         self.modal_open = False
@@ -116,7 +119,7 @@ class UIContext:
     def dispatch(self, pos: Tuple[int, int]) -> Optional[Dict[str, Any]]:
         """Topmost region containing pos, honoring z-order then recency."""
         best = None
-        for r in self._dispatch_regions:
+        for r in self.regions:
             if r["rect"].collidepoint(pos):
                 if best is None or (r["z"], ) >= (best["z"], ) or r["z"] == best["z"]:
                     best = r
@@ -146,7 +149,7 @@ class UIContext:
 
     def mouse_wheel(self, pos: Tuple[int, int], y: int) -> bool:
         """Scroll the topmost scroll region under the cursor."""
-        for r in reversed(self._dispatch_regions):
+        for r in reversed(self.regions):
             if r["kind"] == "scroll" and r["rect"].collidepoint(pos):
                 sid = r["id"]
                 content_h, view_h = self.scroll_bounds.get(sid, (0, 0))

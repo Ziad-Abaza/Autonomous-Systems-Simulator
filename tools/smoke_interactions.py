@@ -86,26 +86,128 @@ for r in app.ui_ctx.regions:
         app._handle_events()
 check("back on EDIT", app.ws_tab == "EDIT")
 
-# ---- canvas click selects something / deselect
+def mdown(pos, btn=1):
+    app.ui_ctx.mouse_pos = pos
+    pygame.event.post(pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN, pos=pos, button=btn))
+    app._handle_events()
+
+
+def mmove(pos):
+    app.ui_ctx.mouse_pos = pos
+    pygame.event.post(pygame.event.Event(
+        pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
+    app._handle_events()
+
+
+def mup():
+    pygame.event.post(pygame.event.Event(
+        pygame.MOUSEBUTTONUP, pos=app.ui_ctx.mouse_pos, button=1))
+    app._handle_events()
+
+
+def wheel(pos, y):
+    app.ui_ctx.mouse_pos = pos
+    pygame.event.post(pygame.event.Event(pygame.MOUSEWHEEL, y=y))
+    app._handle_events()
+
+
+ed = app.track_editor
 frame()
 cv = app.workspace.editor_ui.canvas_rect
-app.ui_ctx.mouse_pos = cv.center
-pygame.event.post(pygame.event.Event(
-    pygame.MOUSEBUTTONDOWN, pos=cv.center, button=1))
-app._handle_events()
-check("canvas click handled without crash", True)
+empty = (cv.x + 24, cv.y + 24)   # in-canvas spot far from the track
 
-# ---- undo stack works after a mutation
-import copy
-before = copy.deepcopy(app.track_editor.road_def.to_dict())
-cp = app.track_editor.road_def.control_points[0]
-cp.x += 5.0
-app._editor_changed()
-check("dirty after mutation", app.dirty)
+# ---- select + drag a control point (cp[0] coincides with the spawn
+#      marker — spawn wins the hit test; use cp[2] instead)
+cp = ed.road_def.control_points[2]
+ox, oy = cp.x, cp.y
+sx, sy = ed.world_to_screen(cp.x, cp.y)
+mdown((int(sx), int(sy)))
+check("point selected on click", ed.selected_point_idx == 2)
+check("drag starts on click", ed.is_dragging_point)
+mmove((int(sx) + 40, int(sy) + 25))
+mup()
+check("drag moved control point",
+      abs(cp.x - ox) > 0.1 or abs(cp.y - oy) > 0.1)
+check("dirty after drag", app.dirty)
+
+# ---- deselect via empty-space click (inside the canvas)
+mdown(empty)
+check("empty click deselects",
+      ed.selected_point_idx is None and not ed.selected_entity_id)
+
+# ---- wheel zoom anchored on canvas
+z0 = ed.zoom
+wheel(cv.center, 1)
+check("wheel zooms in", ed.zoom > z0)
+wheel(cv.center, -1)
+check("wheel zooms out", abs(ed.zoom - z0) < 0.01)
+
+# ---- RMB pan on empty space inside the canvas
+ed.view_offset_x = 0.0
+ed.view_offset_y = 0.0
+mdown(empty, btn=3)
+mmove((empty[0] + 60, empty[1] - 30))
+mup()
+check("RMB pans view", abs(ed.view_offset_x) > 0.01 or
+      abs(ed.view_offset_y) > 0.01)
+
+# ---- frame all: every control point projects inside the canvas
+ed.frame_all()
+inside = all(cv.collidepoint(ed.world_to_screen(p.x, p.y))
+             for p in ed.road_def.control_points)
+check("frame_all keeps all points visible", inside)
+
+# ---- draw tool inserts a point on an edge
+ed.tool = "draw"
+n0 = len(ed.road_def.control_points)
+p1 = ed.road_def.control_points[0]
+p2 = ed.road_def.control_points[1]
+s1 = ed.world_to_screen(p1.x, p1.y)
+s2 = ed.world_to_screen(p2.x, p2.y)
+mid = ((s1[0] + s2[0]) // 2, (s1[1] + s2[1]) // 2)
+mdown(mid)
+mup()
+check("draw tool inserts point on edge",
+      len(ed.road_def.control_points) == n0 + 1)
+ed.tool = "select"
+
+# ---- delete via Del key
+key(pygame.K_DELETE)
+check("Del deletes selected point",
+      len(ed.road_def.control_points) == n0)
+
+# ---- undo restores the deleted point
 key(pygame.K_z, pygame.KMOD_CTRL)
-after = app.track_editor.road_def.control_points[0].x
-check("ctrl+z undoes point move",
-      abs(after - (cp.x - 5.0)) < 0.01 or abs(after - before["control_points"][0]["x"]) < 0.01)
+check("undo restores point",
+      len(ed.road_def.control_points) == n0 + 1)
+
+# ---- place entity via placement tool
+ed.active_tool = "obstacle"
+c0 = len(ed.entities)
+mdown(cv.center)
+check("entity placed on canvas", len(ed.entities) == c0 + 1)
+check("entity selected after placement", bool(ed.selected_entity_id))
+
+# ---- snap enabled → entity position snapped to integer
+ed.snap_enabled = True
+ed.active_tool = "cone"
+mdown((cv.centerx + 37, cv.centery + 19))
+ent = ed.entities[-1]
+check("snap rounds position",
+      abs(ent.pos.x - round(ent.pos.x)) < 1e-6
+      and abs(ent.pos.y - round(ent.pos.y)) < 1e-6)
+ed.snap_enabled = False
+
+# ---- drag entity
+es = ed.world_to_screen(ent.pos.x, ent.pos.y)
+ox, oy = ent.pos.x, ent.pos.y
+ed.select_entity(ent.entity_id)
+mdown((int(es[0]), int(es[1])))
+mmove((int(es[0]) + 25, int(es[1]) + 15))
+mup()
+check("entity drag moves it",
+      abs(ent.pos.x - ox) > 0.1 or abs(ent.pos.y - oy) > 0.1)
 
 # ---- save via Ctrl+S
 key(pygame.K_s, pygame.KMOD_CTRL)

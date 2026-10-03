@@ -6,14 +6,15 @@ full-state snapshots are cheap and far more robust than inverse-command
 math — every mutation path (drags, inserts, deletes, placement,
 inspector property changes) is covered uniformly.
 
-State = (road_definition_dict, entities_list_of_dicts) as produced by
-RoadDefinition.to_dict / WorldEntity.to_dict — pure data, no pygame.
+State = any deep-copyable document snapshot — the app now stores full
+EnvironmentProject dicts (road + entities + agent + scenario + vehicle
+config) so undo/redo covers both editor and inspector edits.
 """
 from __future__ import annotations
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-Snapshot = Tuple[Dict[str, Any], List[Dict[str, Any]]]
+Snapshot = Any
 
 
 class EditHistory:
@@ -28,7 +29,7 @@ class EditHistory:
 
     def push(self, snapshot: Snapshot) -> None:
         """Record a state AFTER a mutation (or the initial state)."""
-        snap = (copy.deepcopy(snapshot[0]), copy.deepcopy(snapshot[1]))
+        snap = copy.deepcopy(snapshot)
         if self._idx >= 0 and self._stack[self._idx] == snap:
             return  # no-op mutation, don't pollute the stack
         del self._stack[self._idx + 1:]  # truncate redo branch

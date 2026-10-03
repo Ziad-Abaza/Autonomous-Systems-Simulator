@@ -22,8 +22,6 @@ import numpy as np
 import moderngl
 
 from sim_core.math_utils import Vec2, Vec3
-from sim_core.track.road_definition import RoadDefinition
-from sim_core.world.entity import WorldEntity
 from sim_env.environment import SimulationEnvironment
 from sim_net.server import SimulationServer
 from sim_render.renderer import SimulationRenderer3D
@@ -93,6 +91,7 @@ class SimulationStudioApp:
         self.dirty = False
         self.dataset_detail: Optional[str] = None
         self.recording_summary: Optional[Dict[str, Any]] = None
+        self.replay_path: Optional[str] = None
         self.replay_accum = 0.0
         self._last_recorded_step = -1
 
@@ -177,7 +176,7 @@ class SimulationStudioApp:
 
         from sim_ui.edit_history import EditHistory
         self.edit_history = EditHistory()
-        self.edit_history.clear(self._editor_snapshot())
+        self.edit_history.clear(self._project_snapshot())
         self.inspector = EnvironmentInspector(
             self.env.road_def,
             self.env.vehicle.config,
@@ -565,36 +564,34 @@ class SimulationStudioApp:
         else:
             print(f"[Studio] {text}")
 
-    def _editor_snapshot(self):
-        return (self.track_editor.road_def.to_dict(),
-                [e.to_dict() for e in self.track_editor.entities])
+    def _project_snapshot(self) -> Dict[str, Any]:
+        """Full document snapshot: road + entities + agent + scenario +
+        vehicle config. Covers both editor and inspector edits so undo
+        applies to the whole environment document."""
+        self.project.road_def = self.env.road_def
+        self.project.vehicle_config = self.env.vehicle.config
+        self.project.entities = self.env.entities
+        if hasattr(self, "inspector"):
+            self.project.agent = self.inspector.agent
+            self.project.scenario_def = self.inspector.scenario_def
+        return self.project.to_dict()
 
     def _restore_snapshot(self, snap) -> None:
-        rd_d, ents_d = snap
-        new_rd = RoadDefinition.from_dict(rd_d)
-        rd = self.track_editor.road_def
-        rd.name = new_rd.name
-        rd.is_closed = new_rd.is_closed
-        rd.num_checkpoints = new_rd.num_checkpoints
-        rd.control_points = new_rd.control_points
-        rd.spawn_point = new_rd.spawn_point
-        self.track_editor.entities[:] = [
-            WorldEntity.from_dict(e) for e in ents_d]
-        self.track_editor.deselect_all()
-        self.inspector.selected_point_idx = None
-        self.inspector.selected_entity_id = None
-        self.inspector.run_validation()
+        file_path = getattr(self.project, "file_path", None)
+        proj = EnvironmentProject.from_dict(snap)
+        self._apply_project(proj, file_path, reset_history=False)
+        self.dirty = True
 
     def _editor_changed(self) -> None:
         """Committed editor mutation → dirty + history snapshot."""
         self.dirty = True
         if hasattr(self, "edit_history"):
-            self.edit_history.push(self._editor_snapshot())
+            self.edit_history.push(self._project_snapshot())
 
     def mark_dirty(self) -> None:
         self.dirty = True
         if hasattr(self, "edit_history"):
-            self.edit_history.push(self._editor_snapshot())
+            self.edit_history.push(self._project_snapshot())
 
     def undo(self) -> None:
         snap = self.edit_history.undo() if hasattr(self, "edit_history") else None
@@ -615,8 +612,11 @@ class SimulationStudioApp:
         self._status("Redo", "info")
 
     def _apply_project(self, proj: EnvironmentProject,
-                       path: Optional[str] = None) -> None:
-        """Single project-load path: env + editor + inspector + history."""
+                       path: Optional[str] = None,
+                       reset_history: bool = True) -> None:
+        """Single project-load path: env + editor + inspector + history.
+        reset_history=False when restoring via undo/redo (the stack
+        manages itself)."""
         proj.file_path = path
         self.project = proj
         self.env.entities = proj.entities
@@ -643,8 +643,8 @@ class SimulationStudioApp:
         self.inspector.run_validation()
         self.obs, self.step_info = self.env.reset()
         self.dirty = False
-        if hasattr(self, "edit_history"):
-            self.edit_history.clear(self._editor_snapshot())
+        if reset_history and hasattr(self, "edit_history"):
+            self.edit_history.clear(self._project_snapshot())
 
     def open_project(self, proj: EnvironmentProject,
                      path: Optional[str] = None) -> None:
@@ -902,6 +902,7 @@ class SimulationStudioApp:
             self._status(f"Cannot load recording: {e}", "error")
             return
         self.replay_player.load_recording(data)
+        self.replay_path = path
         self._apply_replay_frame()
         self.ws_tab = "REPLAY"
         self.renderer.camera.mode = CameraMode.CHASE
@@ -1046,6 +1047,20 @@ class SimulationStudioApp:
                     self._status("Track deleted", "ok")
                 except Exception as e:
                     self._status(f"Delete failed: {e}", "error")
+        elif dlg_id == "rename":
+            path = (self.dialog_payload or {}).get("path")
+            name = (payload or {}).get("name", "").strip()
+            self.active_dialog = None
+            if path and name:
+                try:
+                    self.library.rename(path, name)
+                    if getattr(self.project, "file_path", None) == path:
+                        self.project.name = name
+                        self.project.road_def.name = name
+                    self.home_screen.invalidate_thumbs()
+                    self._status(f"Renamed to {name}", "ok")
+                except Exception as e:
+                    self._status(f"Rename failed: {e}", "error")
         elif dlg_id == "delete_ds":
             path = (self.dialog_payload or {}).get("path")
             self.active_dialog = None
@@ -1072,6 +1087,16 @@ class SimulationStudioApp:
             self.active_dialog = None
             if payload:
                 self.reveal_in_folder(payload)
+        elif dlg_id == "rec_view_replay":
+            self.active_dialog = None
+            if payload:
+                ep = os.path.join(payload, "episode.json") \
+                    if os.path.isdir(payload) else payload
+                self.load_replay(ep)
+        elif dlg_id == "rec_again":
+            self.active_dialog = "record"
+            self.ui_ctx.inputs["rec_name"] = {
+                "text": self.suggest_recording_name(), "caret": 0}
 
     def run(self) -> None:
         """Main simulation execution loop."""
@@ -1271,7 +1296,9 @@ class SimulationStudioApp:
         #    The EDIT tab uses a dedicated 2D canvas; drawing 3D behind it
         #    was the source of the old double-visualization problem.
         show_3d = (self.studio_screen == "workspace"
-                   and self.ws_tab in ("SIMULATE", "REPLAY"))
+                   and (self.ws_tab == "SIMULATE"
+                        or (self.ws_tab == "REPLAY"
+                            and self.replay_player.total_frames > 0)))
         if show_3d:
             all_scene_obs = self.env.obstacles + [
                 e for e in self.env.entities if e not in self.env.obstacles]

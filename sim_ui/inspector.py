@@ -1,4 +1,4 @@
-"""
+﻿"""
 Comprehensive RL Environment Designer & Inspector Architecture.
 Provides interactive visual authoring, scene hierarchy, and validation for:
 - Environment Overview & Training Exporter
@@ -31,6 +31,7 @@ from sim_env.spaces import ObservationSchema
 from sim_env.agent import AgentDefinition
 from sim_env.scenario_designer import ScenarioDefinition
 from sim_env.validator import EnvironmentValidator, ValidationReport
+from sim_ui import theme as T
 
 
 class PropertyRow:
@@ -67,12 +68,23 @@ class EnvironmentInspector:
     CATEGORY_RL = ["AGENT", "OBS", "ACTION", "REWARD", "TERM", "SCENARIO", "VALIDATE", "TRAIN"]
     ALL_TABS = CATEGORY_GEO + CATEGORY_RL
 
-    # Abbreviated tab labels that fit the fixed-width tab strip
+    # Tab labels — row 1 fits full words; row 2 uses readable
+    # abbreviations (full names available as tooltips via TAB_TOOLTIPS).
     TAB_LABELS = {
-        "OVERVIEW": "OVER", "SCENE": "SCENE", "TRACK": "TRACK",
-        "POINT": "POINT", "ENTITY": "ENT",
-        "AGENT": "AGT", "OBS": "OBS", "ACTION": "ACT", "REWARD": "RWD",
-        "TERM": "TRM", "SCENARIO": "SCN", "VALIDATE": "VAL", "TRAIN": "TRN",
+        "OVERVIEW": "Overview", "SCENE": "Scene", "TRACK": "Track",
+        "POINT": "Point", "ENTITY": "Entity",
+        "AGENT": "Agent", "OBS": "Obs", "ACTION": "Act", "REWARD": "Rwd",
+        "TERM": "Trm", "SCENARIO": "Scn", "VALIDATE": "Val", "TRAIN": "Trn",
+    }
+    TAB_TOOLTIPS = {
+        "OBS": "Observation channels — what the agent sees",
+        "ACTION": "Action space — how the agent drives",
+        "REWARD": "Reward function — what the agent optimizes",
+        "TERM": "Termination rules — when an episode ends",
+        "SCENARIO": "Scenario — weather, traffic, conditions",
+        "VALIDATE": "Environment validation — training readiness gate",
+        "TRAIN": "Training & experiments",
+        "AGENT": "Agent definition & vehicle",
     }
     # Validation issue subsystem → owning tab (click-to-navigate)
     SUBSYSTEM_TAB = {
@@ -198,13 +210,13 @@ class EnvironmentInspector:
             
             is_valid = self.last_validation_report.is_valid_for_rl if self.last_validation_report else True
             status_txt = "VALID (READY FOR RL)" if is_valid else f"INVALID ({len(self.last_validation_report.errors)} ERRORS)"
-            props.append(PropertyRow("ov_val", "RL Readiness Gate", "label", status_txt))
+            props.append(PropertyRow("ov_val", "Training Readiness", "label", status_txt))
 
-            props.append(PropertyRow("ov_head_actions", "--- RL PIPELINE ACTIONS ---", "label", ""))
-            props.append(PropertyRow("ov_btn_export", "Export Bundle", "action", "EXPORT TRAINING"))
-            props.append(PropertyRow("ov_btn_tmpl_basic", "Template: Basic", "action", "LOAD BASIC"))
-            props.append(PropertyRow("ov_btn_tmpl_lane", "Template: Lane Keep", "action", "LOAD LANE"))
-            props.append(PropertyRow("ov_btn_tmpl_obs", "Template: Obstacles", "action", "LOAD OBSTACLES"))
+            props.append(PropertyRow("ov_head_actions", "--- TRAINING ACTIONS ---", "label", ""))
+            props.append(PropertyRow("ov_btn_export", "Export Bundle", "action", "Export Training"))
+            props.append(PropertyRow("ov_btn_tmpl_basic", "Template: Basic", "action", "Load Basic"))
+            props.append(PropertyRow("ov_btn_tmpl_lane", "Template: Lane Keep", "action", "Load Lane"))
+            props.append(PropertyRow("ov_btn_tmpl_obs", "Template: Obstacles", "action", "Load Obstacles"))
 
         # 2. AGENT DEFINITION TAB
         elif self.active_tab == "AGENT":
@@ -271,11 +283,11 @@ class EnvironmentInspector:
         elif self.active_tab == "VALIDATE":
             rep = self.last_validation_report
             if rep:
-                props.append(PropertyRow("val_gate", "Gate Status", "label", "PASS - READY" if rep.is_valid_for_rl else "FAIL - BLOCKED"))
+                props.append(PropertyRow("val_gate", "Training Readiness", "label", "PASS - READY" if rep.is_valid_for_rl else "FAIL - BLOCKED"))
                 props.append(PropertyRow("val_errs", f"Errors ({len(rep.errors)})", "label", "None" if not rep.errors else rep.errors[0].message[:28]))
                 props.append(PropertyRow("val_warns", f"Warnings ({len(rep.warnings)})", "label", f"{len(rep.warnings)} items"))
                 props.append(PropertyRow("val_infos", f"Info ({len(rep.infos)})", "label", f"{len(rep.infos)} items"))
-                props.append(PropertyRow("val_btn_run", "Re-Run Validator", "action", "VALIDATE NOW"))
+                props.append(PropertyRow("val_btn_run", "Re-Run Validation", "action", "Validate Now"))
                 for i, err in enumerate(rep.errors[:8]):
                     props.append(PropertyRow(f"val_nav_err_{i}", f"ERROR: {err.subsystem}", "nav", err.message[:32]))
                 for i, w in enumerate(rep.warnings[:6]):
@@ -446,7 +458,7 @@ class EnvironmentInspector:
                 props.append(PropertyRow("cp_width", "Road Width", "float", cp.width, 4.0, 40.0, 1.0, unit="m"))
                 props.append(PropertyRow("cp_elevation", "Elevation (Z)", "float", cp.z, -50.0, 100.0, 0.5, unit="m"))
                 props.append(PropertyRow("cp_banking", "Banking", "float", cp.banking, -30.0, 30.0, 1.0, unit="°"))
-                props.append(PropertyRow("cp_action_del", "Delete Point", "action", "DELETE POINT"))
+                props.append(PropertyRow("cp_action_del", "Delete Point", "action", "Delete Point"))
             else:
                 props.append(PropertyRow("cp_none", "No Point Selected", "label", "Click point on canvas"))
 
@@ -460,7 +472,7 @@ class EnvironmentInspector:
                 props.append(PropertyRow("ent_yaw", "Heading (Yaw)", "float", math.degrees(ent.yaw), -180.0, 180.0, 5.0, unit="°"))
                 if hasattr(ent, 'is_collidable'):
                     props.append(PropertyRow("ent_col", "Collidable", "bool", ent.is_collidable))
-                props.append(PropertyRow("ent_del", "Delete Entity", "action", "DELETE ENTITY"))
+                props.append(PropertyRow("ent_del", "Delete Entity", "action", "Delete Entity"))
             else:
                 props.append(PropertyRow("ent_none", "No Entity Selected", "label", "Click entity on canvas"))
 
@@ -658,8 +670,8 @@ class EnvironmentInspector:
         """
         Renders the complete 2-tier Environment Designer panel.
         """
-        pygame.draw.rect(surface, (16, 20, 28, 240), (x, y, w, h), border_radius=8)
-        pygame.draw.rect(surface, (45, 55, 75), (x, y, w, h), 1, border_radius=8)
+        pygame.draw.rect(surface, T.C.panel, (x, y, w, h), border_radius=8)
+        pygame.draw.rect(surface, T.C.border, (x, y, w, h), 1, border_radius=8)
 
         f_bold = fonts['bold']
         f_small = fonts['small']
@@ -668,7 +680,7 @@ class EnvironmentInspector:
 
         # 1. Header
         header_y = y + 8
-        surface.blit(f_bold.render("RL ENVIRONMENT DESIGNER", True, (0, 210, 255)), (x + 12, header_y))
+        surface.blit(f_bold.render("ENVIRONMENT", True, T.C.accent_line), (x + 12, header_y))
 
         # 2. Two-tier category tab bar (abbreviated labels + issue badges)
         rep = self.last_validation_report
@@ -682,13 +694,13 @@ class EnvironmentInspector:
         for i, tab in enumerate(self.CATEGORY_GEO):
             tab_rect = pygame.Rect(x + 10 + i * tab_w1, tab_y1, tab_w1 - 2, 22)
             is_sel = (self.active_tab == tab)
-            bg = (0, 130, 220) if is_sel else (28, 35, 48)
-            txt_col = (255, 255, 255) if is_sel else (150, 165, 185)
+            bg = T.C.accent if is_sel else T.C.panel_alt
+            txt_col = T.C.text_on_accent if is_sel else T.C.text_dim
             pygame.draw.rect(surface, bg, tab_rect, border_radius=3)
             lbl = f_small.render(self.TAB_LABELS.get(tab, tab), True, txt_col)
             surface.blit(lbl, (tab_rect.centerx - lbl.get_width() // 2, tab_rect.centery - lbl.get_height() // 2))
             if tab in error_tabs:
-                pygame.draw.circle(surface, (230, 80, 70),
+                pygame.draw.circle(surface, T.C.error,
                                    (tab_rect.right - 6, tab_rect.y + 5), 3)
             clickable_buttons.append((tab_rect, f"tab_{tab}"))
 
@@ -698,19 +710,19 @@ class EnvironmentInspector:
         for i, tab in enumerate(self.CATEGORY_RL):
             tab_rect = pygame.Rect(x + 10 + i * tab_w2, tab_y2, tab_w2 - 2, 22)
             is_sel = (self.active_tab == tab)
-            bg = (0, 130, 220) if is_sel else (28, 35, 48)
-            txt_col = (255, 255, 255) if is_sel else (150, 165, 185)
+            bg = T.C.accent if is_sel else T.C.panel_alt
+            txt_col = T.C.text_on_accent if is_sel else T.C.text_dim
             pygame.draw.rect(surface, bg, tab_rect, border_radius=3)
             lbl = f_small.render(self.TAB_LABELS.get(tab, tab), True, txt_col)
             surface.blit(lbl, (tab_rect.centerx - lbl.get_width() // 2, tab_rect.centery - lbl.get_height() // 2))
             if tab in error_tabs:
-                pygame.draw.circle(surface, (230, 80, 70),
+                pygame.draw.circle(surface, T.C.error,
                                    (tab_rect.right - 6, tab_rect.y + 5), 3)
             clickable_buttons.append((tab_rect, f"tab_{tab}"))
 
         # Separator line
         sep_y = tab_y2 + 26
-        pygame.draw.line(surface, (45, 55, 75), (x + 10, sep_y), (x + w - 10, sep_y), 1)
+        pygame.draw.line(surface, T.C.border, (x + 10, sep_y), (x + w - 10, sep_y), 1)
 
         # 3. Property Rows — scrollable, clipped region
         props = self.get_properties_for_active_tab()
@@ -732,45 +744,45 @@ class EnvironmentInspector:
             if row_y > self.props_area.bottom:
                 break
 
-            lbl_color = (0, 200, 255) if "---" in p.label else (180, 195, 210)
+            lbl_color = T.C.accent_line if "---" in p.label else T.C.text_dim
             surface.blit(f_small.render(p.label, True, lbl_color), (x + 12, row_y + 3))
 
             if p.prop_type in ("float", "int"):
                 val_str = f"{p.current_value:.2f}{p.unit}" if p.prop_type == "float" else f"{int(p.current_value)}{p.unit}"
-                lbl_val = f_mono.render(val_str, True, (255, 255, 255))
+                lbl_val = f_mono.render(val_str, True, T.C.text)
                 surface.blit(lbl_val, (x + w - 105 - lbl_val.get_width(), row_y + 3))
 
                 btn_minus = pygame.Rect(x + w - 85, row_y + 1, 35, 19)
                 btn_plus = pygame.Rect(x + w - 46, row_y + 1, 35, 19)
-                pygame.draw.rect(surface, (35, 45, 60), btn_minus, border_radius=3)
-                pygame.draw.rect(surface, (35, 45, 60), btn_plus, border_radius=3)
-                surface.blit(f_bold.render("-", True, (220, 220, 220)), (btn_minus.centerx - 4, btn_minus.centery - 7))
-                surface.blit(f_bold.render("+", True, (220, 220, 220)), (btn_plus.centerx - 5, btn_plus.centery - 7))
+                pygame.draw.rect(surface, T.C.panel_alt, btn_minus, border_radius=3)
+                pygame.draw.rect(surface, T.C.panel_alt, btn_plus, border_radius=3)
+                surface.blit(f_bold.render("-", True, T.C.text), (btn_minus.centerx - 4, btn_minus.centery - 7))
+                surface.blit(f_bold.render("+", True, T.C.text), (btn_plus.centerx - 5, btn_plus.centery - 7))
 
                 clickable_buttons.append((btn_minus, f"prop_minus_{p.prop_id}"))
                 clickable_buttons.append((btn_plus, f"prop_plus_{p.prop_id}"))
 
             elif p.prop_type == "bool":
                 btn_toggle = pygame.Rect(x + w - 75, row_y + 1, 65, 19)
-                bg_col = (30, 140, 70) if p.current_value else (80, 40, 40)
+                bg_col = T.C.ok if p.current_value else T.C.panel_alt
                 txt = "TRUE" if p.current_value else "FALSE"
                 pygame.draw.rect(surface, bg_col, btn_toggle, border_radius=3)
-                lbl_t = f_small.render(txt, True, (255, 255, 255))
+                lbl_t = f_small.render(txt, True, T.C.text_on_accent)
                 surface.blit(lbl_t, (btn_toggle.centerx - lbl_t.get_width() // 2, btn_toggle.centery - lbl_t.get_height() // 2))
                 clickable_buttons.append((btn_toggle, f"prop_toggle_{p.prop_id}"))
 
             elif p.prop_type == "enum":
                 btn_enum = pygame.Rect(x + w - 105, row_y + 1, 95, 19)
-                pygame.draw.rect(surface, (35, 48, 68), btn_enum, border_radius=3)
-                lbl_e = f_small.render(str(p.current_value).upper()[:12], True, (0, 210, 255))
+                pygame.draw.rect(surface, T.C.panel_alt, btn_enum, border_radius=3)
+                lbl_e = f_small.render(str(p.current_value).upper()[:12], True, T.C.accent_line)
                 surface.blit(lbl_e, (btn_enum.centerx - lbl_e.get_width() // 2, btn_enum.centery - lbl_e.get_height() // 2))
                 clickable_buttons.append((btn_enum, f"prop_enum_{p.prop_id}"))
 
             elif p.prop_type == "action":
                 btn_act = pygame.Rect(x + w - 130, row_y + 1, 120, 19)
-                color = (150, 40, 40) if "DEL" in p.prop_id else (0, 110, 170)
+                color = T.C.error if "DEL" in p.prop_id else T.C.accent
                 pygame.draw.rect(surface, color, btn_act, border_radius=3)
-                lbl_a = f_small.render(str(p.current_value), True, (255, 255, 255))
+                lbl_a = f_small.render(str(p.current_value), True, T.C.text_on_accent)
                 surface.blit(lbl_a, (btn_act.centerx - lbl_a.get_width() // 2, btn_act.centery - lbl_a.get_height() // 2))
                 clickable_buttons.append((btn_act, f"prop_act_{p.prop_id}"))
 
@@ -778,7 +790,7 @@ class EnvironmentInspector:
                 # Compact sparkline for metric series (e.g. episode rewards)
                 series = [float(v) for v in (p.current_value or []) if isinstance(v, (int, float))]
                 chart = pygame.Rect(x + w - 150, row_y + 2, 138, 18)
-                pygame.draw.rect(surface, (20, 26, 36), chart, border_radius=2)
+                pygame.draw.rect(surface, T.C.canvas, chart, border_radius=2)
                 if len(series) >= 2:
                     lo, hi = min(series), max(series)
                     span = (hi - lo) or 1.0
@@ -787,13 +799,13 @@ class EnvironmentInspector:
                         px = chart.x + 2 + i * (chart.w - 4) / max(1, len(series[-60:]) - 1)
                         py = chart.bottom - 2 - (v - lo) / span * (chart.h - 4)
                         pts.append((px, py))
-                    pygame.draw.lines(surface, (0, 210, 255), False, pts, 1)
+                    pygame.draw.lines(surface, T.C.accent_line, False, pts, 1)
 
             elif p.prop_type == "multichart":
                 # Multi-series comparison chart on a SHARED scale — the point
                 # of a comparison view is a common axis.
                 chart = pygame.Rect(x + w - 150, row_y + 2, 138, 18)
-                pygame.draw.rect(surface, (20, 26, 36), chart, border_radius=2)
+                pygame.draw.rect(surface, T.C.canvas, chart, border_radius=2)
                 series_list = [
                     [float(v) for v in (s.get("data") or [])
                      if isinstance(v, (int, float))]
@@ -804,11 +816,11 @@ class EnvironmentInspector:
                     lo, hi = min(flat), max(flat)
                     span = (hi - lo) or 1.0
                     # Axis frame + min/max ticks.
-                    pygame.draw.line(surface, (60, 70, 90),
+                    pygame.draw.line(surface, T.C.separator,
                                      (chart.left, chart.bottom),
                                      (chart.right, chart.bottom), 1)
-                    hi_txt = f_small.render(f"{hi:.0f}", True, (110, 120, 140))
-                    lo_txt = f_small.render(f"{lo:.0f}", True, (110, 120, 140))
+                    hi_txt = f_small.render(f"{hi:.0f}", True, T.C.text_faint)
+                    lo_txt = f_small.render(f"{lo:.0f}", True, T.C.text_faint)
                     surface.blit(hi_txt, (chart.left - hi_txt.get_width() - 2,
                                           chart.top - 3))
                     surface.blit(lo_txt, (chart.left - lo_txt.get_width() - 2,
@@ -830,16 +842,16 @@ class EnvironmentInspector:
             elif p.prop_type == "nav":
                 # Clickable navigation link — jumps to the owning tab
                 nav_rect = pygame.Rect(x + 10, row_y + 1, w - 20, 20)
-                pygame.draw.rect(surface, (24, 34, 46), nav_rect, border_radius=3)
+                pygame.draw.rect(surface, T.C.panel_alt, nav_rect, border_radius=3)
                 msg = str(p.current_value)
-                lbl_n = f_small.render(msg[:40], True, (150, 190, 230))
+                lbl_n = f_small.render(msg[:40], True, T.C.info)
                 surface.blit(lbl_n, (nav_rect.x + 6, nav_rect.y + 3))
-                arrow = f_small.render("›", True, (0, 180, 230))
+                arrow = f_small.render(">", True, T.C.accent_line)
                 surface.blit(arrow, (nav_rect.right - 14, nav_rect.y + 3))
                 clickable_buttons.append((nav_rect, f"prop_nav_{p.prop_id}"))
 
             elif p.prop_type == "label":
-                lbl_v = f_small.render(str(p.current_value), True, (150, 160, 175))
+                lbl_v = f_small.render(str(p.current_value), True, T.C.text_dim)
                 surface.blit(lbl_v, (x + w - 12 - lbl_v.get_width(), row_y + 3))
 
             row_y += row_h
@@ -851,18 +863,18 @@ class EnvironmentInspector:
             bar_h = max(20, int(self.props_area.h * frac))
             rel = scroll_off / max_off
             bar_y = self.props_area.y + int((self.props_area.h - bar_h) * rel)
-            pygame.draw.rect(surface, (60, 70, 90),
+            pygame.draw.rect(surface, T.C.separator,
                              (self.props_area.right - 3, bar_y, 3, bar_h),
                              border_radius=2)
 
         # 4. Bottom Action Buttons (Rebuild 3D, New, Save, Load)
         bot_y = y + h - 80
-        pygame.draw.line(surface, (45, 55, 75), (x + 10, bot_y - 6), (x + w - 10, bot_y - 6), 1)
+        pygame.draw.line(surface, T.C.border, (x + 10, bot_y - 6), (x + w - 10, bot_y - 6), 1)
 
         # Rebuild 3D Mesh
         btn_rebuild = pygame.Rect(x + 12, bot_y, w - 24, 30)
-        pygame.draw.rect(surface, (0, 140, 90), btn_rebuild, border_radius=4)
-        lbl_rb = f_bold.render("REBUILD 3D ENVIRONMENT", True, (255, 255, 255))
+        pygame.draw.rect(surface, T.C.ok, btn_rebuild, border_radius=4)
+        lbl_rb = f_bold.render("Rebuild 3D", True, T.C.text_on_accent)
         surface.blit(lbl_rb, (btn_rebuild.centerx - lbl_rb.get_width() // 2, btn_rebuild.centery - lbl_rb.get_height() // 2))
         clickable_buttons.append((btn_rebuild, "action_rebuild_mesh"))
 
@@ -873,13 +885,13 @@ class EnvironmentInspector:
         b_save = pygame.Rect(x + 12 + sub_w + 5, sub_y, sub_w, 26)
         b_load = pygame.Rect(x + 12 + (sub_w + 5) * 2, sub_y, sub_w, 26)
 
-        pygame.draw.rect(surface, (35, 45, 60), b_new, border_radius=3)
-        pygame.draw.rect(surface, (30, 90, 150), b_save, border_radius=3)
-        pygame.draw.rect(surface, (45, 55, 75), b_load, border_radius=3)
+        pygame.draw.rect(surface, T.C.panel_alt, b_new, border_radius=3)
+        pygame.draw.rect(surface, T.C.accent, b_save, border_radius=3)
+        pygame.draw.rect(surface, T.C.panel_alt, b_load, border_radius=3)
 
-        surface.blit(f_small.render("NEW", True, (230, 230, 230)), (b_new.centerx - 12, b_new.centery - 6))
-        surface.blit(f_small.render("SAVE", True, (255, 255, 255)), (b_save.centerx - 14, b_save.centery - 6))
-        surface.blit(f_small.render("LOAD", True, (230, 230, 230)), (b_load.centerx - 14, b_load.centery - 6))
+        surface.blit(f_small.render("New", True, T.C.text), (b_new.centerx - 12, b_new.centery - 6))
+        surface.blit(f_small.render("Save", True, T.C.text_on_accent), (b_save.centerx - 14, b_save.centery - 6))
+        surface.blit(f_small.render("Open...", True, T.C.text), (b_load.centerx - 14, b_load.centery - 6))
 
         clickable_buttons.append((b_new, "action_new_project"))
         clickable_buttons.append((b_save, "action_save_project"))

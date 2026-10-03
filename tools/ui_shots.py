@@ -23,12 +23,16 @@ os.makedirs(OUT, exist_ok=True)
 
 app = SimulationStudioApp(width=W, height=H, headless=False, port=8799)
 
+# Force dark theme for the evidence set — settings persist across runs
+import sim_ui.theme as _T
+_T.set_theme("dark")
+
 
 def shot(name):
     app._render()
     data = app.gl_ctx.screen.read(components=3)  # before flip!
     pygame.display.flip()
-    img = pygame.image.frombuffer(data, (W, H), "RGB").convert()
+    img = pygame.image.frombuffer(data, (W, H), "BGR").convert()
     img = pygame.transform.flip(img, False, True)
     pygame.image.save(img, os.path.join(OUT, f"{W}x{H}_{name}.png"))
     print("saved", name)
@@ -59,6 +63,13 @@ shot("h5_home_settings")
 app.active_dialog = "new_track"
 shot("h6_new_track_dialog")
 app.active_dialog = None
+
+# confirm dialog
+app.active_dialog = "confirm_delete"
+app.dialog_payload = {"path": r"D:\tracks\demo.sim.json", "name": "Demo"}
+shot("h7_confirm_delete")
+app.active_dialog = None
+app.dialog_payload = None
 
 # ---- WORKSPACE: EDIT ----
 app.open_project(create_oval_circuit(), None)
@@ -94,6 +105,17 @@ app.hud.show_obs_inspector = True
 shot("s2_obs_inspector")
 app.hud.show_obs_inspector = False
 
+# recording dialog
+app.active_dialog = "record"
+shot("s3_record_dialog")
+app.active_dialog = None
+# recording in progress state
+app.recorder.is_recording = True
+app.recorder.frames = [{}] * 42
+shot("s4_recording_active")
+app.recorder.is_recording = False
+app.recorder.frames = []
+
 # ---- WORKSPACE: REPLAY ----
 app.ws_tab = "REPLAY"
 shot("r1_replay_empty")
@@ -120,12 +142,17 @@ shot("r2_replay_loaded")
 app.ws_tab = "DATA"
 shot("d1_data_datasets")
 
-# ---- light theme home ----
+# ---- light theme ----
 import sim_ui.theme as T
 T.set_theme("light")
 app.studio_screen = "home"
 app.home_screen.section = "TRACKS"
 shot("l1_home_light")
+app.studio_screen = "workspace"
+app.ws_tab = "EDIT"
+shot("l2_edit_light")
+app.ws_tab = "SIMULATE"
+shot("l3_sim_light")
 T.set_theme("dark")
 
 app.cleanup()
