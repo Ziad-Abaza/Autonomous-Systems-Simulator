@@ -150,6 +150,91 @@ def evaluate_policy(
     return result
 
 
+def export_transitions(
+    env: Any,
+    act_fn: Callable[[Any], Any],
+    seeds: List[int],
+    num_episodes: int,
+    output_dir: str,
+    env_fingerprint: str = "",
+    scenario_id: str = "",
+) -> Dict[str, Any]:
+    """
+    Runs eval episodes with a frozen policy and exports every transition as
+    a complete transitions_v1 dataset (episodes.jsonl + manifest.json) —
+    the format consumed by imitation training and dataset inspection.
+
+    Agent-facing fields only: obs/action/reward/terminated/truncated/
+    termination_reason — diagnostic fields never cross the boundary.
+    """
+    from sim_experiment.dataset import DATASET_FORMAT
+
+    os.makedirs(output_dir, exist_ok=True)
+    episodes_out = []
+    total_steps = 0
+
+    for i in range(num_episodes):
+        seed = seeds[i % len(seeds)] if seeds else 0
+        obs, _ = env.reset(seed=seed)
+        steps = []
+        ep_return = 0.0
+        last_reason = ""
+        while True:
+            action = act_fn(obs)
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            ep_return += float(reward)
+            o = obs
+            if isinstance(o, dict):
+                o = o.get("vector")
+            steps.append({
+                "obs": np.asarray(o, dtype=np.float32).tolist(),
+                "action": np.asarray(action).tolist()
+                        if not isinstance(action, (int, float)) else action,
+                "reward": float(reward),
+                "terminated": bool(terminated),
+                "truncated": bool(truncated),
+                "termination_reason": str(info.get("termination_reason", "")),
+            })
+            obs = next_obs
+            last_reason = str(info.get("termination_reason", ""))
+            if terminated or truncated:
+                break
+
+        episodes_out.append({
+            "episode_id": f"eval_ep{i}",
+            "seed": int(seed),
+            "episode_seed": int(seed),
+            "env_fingerprint": env_fingerprint,
+            "scenario_id": scenario_id,
+            "total_return": round(ep_return, 4),
+            "length": len(steps),
+            "termination_reason": last_reason,
+            "steps": steps,
+        })
+        total_steps += len(steps)
+
+    with open(os.path.join(output_dir, "episodes.jsonl"), "w", encoding="utf-8") as f:
+        for ep in episodes_out:
+            f.write(json.dumps(ep) + "\n")
+    with open(os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "dataset_format": DATASET_FORMAT,
+            "source": "evaluation_export",
+            "env_fingerprint": env_fingerprint,
+            "episodes": len(episodes_out),
+            "steps": total_steps,
+            "filters": {},
+            "skipped": {},
+            "isolation": "steps contain agent-visible fields only",
+        }, f, indent=2)
+
+    return {
+        "episodes": len(episodes_out),
+        "steps": total_steps,
+        "output_dir": os.path.abspath(output_dir),
+    }
+
+
 def _obs_vec(obs, obs_dim: int):
     if isinstance(obs, dict):
         obs = obs.get("vector", np.zeros(obs_dim, dtype=np.float32))

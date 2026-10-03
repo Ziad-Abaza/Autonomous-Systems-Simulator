@@ -176,6 +176,8 @@ class PPORunner:
         self._envs_dirty = True
         self._env_epoch = 0
         self._reset_counts = [1] * num_envs
+        # Exact per-episode reset seeds (for trajectory header provenance).
+        self._ep_seeds: List[Optional[int]] = [None] * num_envs
 
         # Resume from a previous checkpoint if requested
         if resume_checkpoint:
@@ -234,9 +236,11 @@ class PPORunner:
 
     def _env_reset(self, env_idx: int):
         """Deterministic reseed+reset for one env (either backend)."""
+        seed = self._next_reset_seed(env_idx)
+        self._ep_seeds[env_idx] = seed
         if self._venv is not None:
-            return self._venv.reset_at(env_idx, seed=self._next_reset_seed(env_idx))
-        return self.envs[env_idx].reset(seed=self._next_reset_seed(env_idx))[0]
+            return self._venv.reset_at(env_idx, seed=seed)
+        return self.envs[env_idx].reset(seed=seed)[0]
 
     def _next_reset_seed(self, env_idx: int) -> int:
         """Deterministic per-(epoch, env, reset) seed — distinct every reset."""
@@ -283,6 +287,7 @@ class PPORunner:
             self.on_step({
                 'env_idx': env_idx,
                 'global_step': S['gsteps'][idx],
+                'episode_seed': self._ep_seeds[env_idx],
                 'obs': next_obs,
                 'action': clamped_act,
                 'reward': float(reward),
@@ -368,12 +373,15 @@ class PPORunner:
                 ep_speeds = [[] for _ in range(num_envs)]
                 if self._venv is not None:
                     seeds = [self._next_reset_seed(e) for e in range(num_envs)]
+                    self._ep_seeds = list(seeds)
                     for o in self._venv.reset_all(seeds):
                         next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
                         next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
                 else:
                     for e, env in enumerate(self.envs):
-                        o, _ = env.reset(seed=self._next_reset_seed(e))
+                        s_e = self._next_reset_seed(e)
+                        self._ep_seeds[e] = s_e
+                        o, _ = env.reset(seed=s_e)
                         next_obs_tensors.append(torch.tensor(_to_vec(o), dtype=torch.float32, device=self.device))
                         next_done_tensors.append(torch.tensor(0.0, dtype=torch.float32, device=self.device))
 

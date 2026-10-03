@@ -100,7 +100,9 @@ def run_training(run_dir: str) -> int:
         resume_checkpoint=resume_ckpt,
     )
 
-    recorder = EpisodeTrajectoryRecorder(traj, traj_limit, contract)
+    recorder = EpisodeTrajectoryRecorder(
+        traj, traj_limit, contract,
+        stage_fn=(lambda: curriculum.stage_index) if curriculum else None)
     recorder.attach(num_envs)
     runner.on_step = recorder
 

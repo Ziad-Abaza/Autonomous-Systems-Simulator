@@ -237,14 +237,18 @@ def setup_curriculum(
 class EpisodeTrajectoryRecorder:
     """
     Records per-episode trajectories from runner on_step records.
-    Expects rec = {env_idx, obs, action, reward, terminated, truncated, info}.
+    Expects rec = {env_idx, obs, action, reward, terminated, truncated, info}
+    plus optional episode_seed (exact reset seed for this episode).
+    `stage_fn` (optional callable) supplies the current curriculum stage.
     """
 
-    def __init__(self, traj_writer, traj_limit: int, contract: Dict[str, Any]):
+    def __init__(self, traj_writer, traj_limit: int, contract: Dict[str, Any],
+                 stage_fn=None):
         self.traj = traj_writer
         self.limit = int(traj_limit)
         self.contract = contract
         self.seed = int(contract["seed"])
+        self.stage_fn = stage_fn
         self.env_episode_idx: List[int] = []
         self.env_step_idx: List[int] = []
         self.episodes_done = 0
@@ -268,6 +272,9 @@ class EpisodeTrajectoryRecorder:
                     seed=self.seed,
                     observation_schema=self.contract.get("observation_schema"),
                     action_schema=self.contract.get("action_schema"),
+                    episode_seed=rec.get("episode_seed"),
+                    curriculum_stage_index=(
+                        self.stage_fn() if self.stage_fn else None),
                 )
             self.traj.record_step(
                 step=self.env_step_idx[env_idx],

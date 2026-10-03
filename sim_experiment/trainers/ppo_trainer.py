@@ -73,7 +73,9 @@ def run_training(run_dir: str) -> int:
         envs = build_envs_from_contract(contract)
     num_envs = len(envs)
 
-    recorder = EpisodeTrajectoryRecorder(traj, traj_limit, contract)
+    recorder = EpisodeTrajectoryRecorder(
+        traj, traj_limit, contract,
+        stage_fn=(lambda: curriculum.stage_index) if curriculum else None)
     recorder.attach(num_envs)
 
     state = {"last_ckpt": 0, "last_eval": 0, "runner": None, "envs": envs}

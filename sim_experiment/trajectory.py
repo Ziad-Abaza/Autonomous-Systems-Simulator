@@ -66,6 +66,8 @@ class TrajectoryWriter:
         seed: int,
         observation_schema: Optional[Dict[str, Any]] = None,
         action_schema: Optional[Dict[str, Any]] = None,
+        episode_seed: Optional[int] = None,
+        curriculum_stage_index: Optional[int] = None,
     ) -> None:
         self.close_episode()
         if os.path.basename(episode_id) != episode_id:
@@ -78,6 +80,12 @@ class TrajectoryWriter:
             "env_fingerprint": env_fingerprint,
             "scenario_id": scenario_id,
             "seed": int(seed),
+            # Exact seed this episode was reset with (for reproducible
+            # re-simulation); distinct from the run-level `seed`.
+            "episode_seed": int(episode_seed) if episode_seed is not None else None,
+            "curriculum_stage_index": (
+                int(curriculum_stage_index)
+                if curriculum_stage_index is not None else None),
             "observation_schema": observation_schema or {},
             "action_schema": action_schema or {},
         })

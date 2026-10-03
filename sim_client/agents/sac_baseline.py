@@ -158,6 +158,7 @@ class SACRunner:
         self._envs_dirty = True
         self._env_epoch = 0
         self._reset_counts = [1] * self.num_envs
+        self._ep_seeds: List[Optional[int]] = [None] * self.num_envs
 
         if resume_checkpoint:
             self.load_checkpoint(resume_checkpoint)
@@ -196,9 +197,11 @@ class SACRunner:
         self._envs_dirty = True
 
     def _env_reset(self, env_idx: int):
+        seed = self._next_reset_seed(env_idx)
+        self._ep_seeds[env_idx] = seed
         if self._venv is not None:
-            return self._venv.reset_at(env_idx, seed=self._next_reset_seed(env_idx))
-        return self.envs[env_idx].reset(seed=self._next_reset_seed(env_idx))[0]
+            return self._venv.reset_at(env_idx, seed=seed)
+        return self.envs[env_idx].reset(seed=seed)[0]
 
     def _next_reset_seed(self, env_idx: int) -> int:
         seed = (self.seed + self._env_epoch * 1_000_003
@@ -224,7 +227,8 @@ class SACRunner:
 
         if self.on_step is not None:
             self.on_step({
-                "env_idx": e, "obs": np.asarray(S["obs"][e]).tolist(),
+                "env_idx": e, "episode_seed": self._ep_seeds[e],
+                "obs": np.asarray(S["obs"][e]).tolist(),
                 "action": np.asarray(env_action).tolist(),
                 "reward": float(reward),
                 "terminated": bool(terminated), "truncated": bool(truncated),
@@ -293,11 +297,14 @@ class SACRunner:
                 self._envs_dirty = False
                 if self._venv is not None:
                     seeds = [self._next_reset_seed(e) for e in range(num_envs)]
+                    self._ep_seeds = list(seeds)
                     for e, o in enumerate(self._venv.reset_all(seeds)):
                         obs[e] = self._vec(o)
                 else:
                     for e, env in enumerate(self.envs):
-                        o, _ = env.reset(seed=self._next_reset_seed(e))
+                        s_e = self._next_reset_seed(e)
+                        self._ep_seeds[e] = s_e
+                        o, _ = env.reset(seed=s_e)
                         obs[e] = self._vec(o)
                 ep_return = [0.0] * num_envs
                 ep_len = [0] * num_envs
