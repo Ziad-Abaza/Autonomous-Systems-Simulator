@@ -95,24 +95,41 @@ class HeadlessSimProcessPool:
     its own Python process, socket, and RNG state.
     """
 
-    def __init__(self, num_envs: int, base_port: Optional[int] = None, repo_root: Optional[str] = None):
+    def __init__(self, num_envs: int, base_port: Optional[int] = None,
+                 repo_root: Optional[str] = None, shared_process: bool = False):
         if num_envs < 1:
             raise ValueError("num_envs must be >= 1")
         self.num_envs = num_envs
+        self.shared_process = shared_process
         self.repo_root = repo_root or os.path.dirname(os.path.abspath(__file__)) + os.sep + ".."
         self.repo_root = os.path.abspath(self.repo_root)
         base = base_port if base_port is not None else _free_port()
-        self.ports = [base + i for i in range(num_envs)]
+        if shared_process:
+            # Single process hosting all envs on ONE port (SimServerMulti).
+            self.ports = [base] * num_envs
+        else:
+            self.ports = [base + i for i in range(num_envs)]
         self.procs: List[subprocess.Popen] = []
 
     def start(self, timeout_s: float = 30.0) -> List[int]:
         """Spawns all simulators and waits for their ports to accept TCP."""
-        for port in self.ports:
+        if self.shared_process:
+            args = [sys.executable, "main.py", "--headless",
+                    "--port", str(self.ports[0]),
+                    "--num-envs", str(self.num_envs)]
+            spawn_plan = [(self.ports[0], args)]
+        else:
+            spawn_plan = [
+                (port, [sys.executable, "main.py", "--headless", "--port", str(port)])
+                for port in self.ports
+            ]
+
+        for port, args in spawn_plan:
             log_path = os.path.join(self.repo_root, "logs")
             os.makedirs(log_path, exist_ok=True)
             log = open(os.path.join(log_path, f"sim_{port}.log"), "w", encoding="utf-8")
             proc = subprocess.Popen(
-                [sys.executable, "main.py", "--headless", "--port", str(port)],
+                args,
                 cwd=self.repo_root,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -120,7 +137,9 @@ class HeadlessSimProcessPool:
             self.procs.append(proc)
 
         deadline = time.time() + timeout_s
-        for port, proc in zip(self.ports, self.procs):
+        wait_plan = [(port, proc) for port, proc in
+                     zip(dict.fromkeys(self.ports), self.procs)]
+        for port, proc in wait_plan:
             while time.time() < deadline:
                 if proc.poll() is not None:
                     raise RuntimeError(f"Headless sim on port {port} exited early (code {proc.returncode})")

@@ -55,13 +55,14 @@ def build_envs_from_contract(
         with open(contract["paths"]["scenario_json"], "r", encoding="utf-8") as f:
             scenario_dict = json.load(f)
 
-    if contract["env_mode"] == "tcp":
+    if contract["env_mode"] in ("tcp", "tcp_multi"):
         from sim_client.gym_env import SimGymEnv
         from sim_experiment.vec_env import SyncVectorEnv
         host = contract["tcp"]["host"]
         ports = contract["tcp"]["ports"]
         # Wrapped as a VectorEnv so curriculum stage transitions broadcast
         # SET_SCENARIO uniformly (protocol >= 2.1 headless simulators).
+        # tcp_multi: ports may repeat (one process, one port, per-client envs).
         vec = SyncVectorEnv(
             [SimGymEnv(host=host, port=p) for p in ports[:num_envs]])
         # The contract's scenario must actually reach the remote sims —

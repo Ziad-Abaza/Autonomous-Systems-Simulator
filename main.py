@@ -31,10 +31,49 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Standalone 3D AI Simulation Platform")
     parser.add_argument("--headless", action="store_true", help="Run in headless simulation mode without GUI")
     parser.add_argument("--port", type=int, default=8765, help="TCP port for external AI model connection (default: 8765)")
+    parser.add_argument("--num-envs", type=int, default=1, help="Headless only: host N independent envs on --port via one multi-client server (default: 1)")
     parser.add_argument("--track", type=str, default="oval", help="Initial track: 'oval', 'serpentine', 'obstacle', or path to .sim.json")
     parser.add_argument("--width", type=int, default=1280, help="Window width (default: 1280)")
     parser.add_argument("--height", type=int, default=720, help="Window height (default: 720)")
     return parser.parse_args()
+
+
+def _run_multi_headless(port: int, num_envs: int, track: str) -> int:
+    """Single-process, multi-env headless server for env_mode='tcp_multi'."""
+    import time
+    from sim_net.multi_server import SimServerMulti
+    from sim_env.environment import SimulationEnvironment
+
+    if track == "serpentine":
+        proj = create_serpentine_track()
+    elif os.path.exists(track):
+        proj = EnvironmentProject.load(track)
+    else:
+        proj = create_oval_circuit()
+
+    def make_env(i):
+        return SimulationEnvironment(
+            road_def=proj.road_def,
+            agent=proj.agent,
+            scenario_def=proj.scenario_def,
+            seed=42 + i,
+        )
+
+    srv = SimServerMulti(
+        env_factories=[(lambda i=i: make_env(i)) for i in range(num_envs)],
+        host="127.0.0.1", port=port)
+    if not srv.start():
+        return 1
+    print(f"[HeadlessMulti] {num_envs} envs listening on port {port}", flush=True)
+    try:
+        while True:
+            srv.poll_and_process()
+            time.sleep(0.0005)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.stop()
+    return 0
 
 
 def main():
@@ -53,6 +92,9 @@ def main():
     print(f"External AI Server Port: {args.port}", flush=True)
     print(f"Initial Environment: {args.track}", flush=True)
     print("=" * 65, flush=True)
+
+    if args.headless and args.num_envs > 1:
+        sys.exit(_run_multi_headless(args.port, args.num_envs, args.track))
 
     app = SimulationStudioApp(
         width=args.width,

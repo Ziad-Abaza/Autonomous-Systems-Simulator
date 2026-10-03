@@ -142,10 +142,14 @@ class LocalTrainingOrchestrator:
             run_id = run.run_id
         rd = self._check_run_dir(rmg.run_dir(experiment_dir, run_id))
 
-        # TCP mode: spawn headless simulator workers first
+        # TCP modes: spawn headless simulator workers first. 'tcp' spawns
+        # one process per env; 'tcp_multi' spawns a single process hosting
+        # all envs on one port (per-client env binding).
         tcp_ports: List[int] = []
-        if env_mode == "tcp":
-            pool = HeadlessSimProcessPool(manifest.training.num_envs)
+        if env_mode in ("tcp", "tcp_multi"):
+            pool = HeadlessSimProcessPool(
+                manifest.training.num_envs,
+                shared_process=(env_mode == "tcp_multi"))
             tcp_ports = pool.start()
             self._sim_pools[rd] = pool
 

@@ -103,12 +103,12 @@ def validate_contract(contract: Dict[str, Any]) -> List[str]:
     else:
         errors.append("paths is not an object")
     env_mode = contract.get("env_mode")
-    if env_mode not in ("inprocess", "tcp", "process"):
+    if env_mode not in ("inprocess", "tcp", "tcp_multi", "process"):
         errors.append(f"unknown env_mode: {env_mode!r}")
-    if env_mode == "tcp":
+    if env_mode in ("tcp", "tcp_multi"):
         tcp = contract.get("tcp", {})
         if not tcp.get("ports"):
-            errors.append("env_mode 'tcp' requires tcp.ports")
+            errors.append(f"env_mode '{env_mode}' requires tcp.ports")
         # Curriculum over TCP requires simulators running protocol >= 2.1
         # (SET_SCENARIO). The contract no longer rejects the combination;
         # the runtime fails explicitly if a simulator doesn't support it.
