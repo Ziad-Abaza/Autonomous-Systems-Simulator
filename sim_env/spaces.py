@@ -47,18 +47,85 @@ class ActionSpaceConfig:
             ])),
         )
 
-    def decode_action(self, raw_action: Union[np.ndarray, List[float], int, float]) -> Tuple[float, float, float]:
+    def validate_action(self, raw_action: Any) -> Tuple[bool, str]:
+        """
+        Validates whether raw_action is structurally and numerically valid.
+        Returns: (is_valid: bool, error_message: str)
+        """
+        if raw_action is None:
+            return False, "Action cannot be None"
+
+        if self.type == ActionSpaceType.DISCRETE:
+            try:
+                if isinstance(raw_action, (np.ndarray, list, tuple)):
+                    if len(raw_action) == 0:
+                        return False, "Empty action container"
+                    val = raw_action[0]
+                else:
+                    val = raw_action
+                
+                # Check for NaN / Inf
+                if isinstance(val, (float, np.floating)):
+                    if np.isnan(val) or np.isinf(val):
+                        return False, f"Discrete action cannot be NaN or Infinity: {val}"
+                
+                idx = int(val)
+                if idx < 0 or idx >= len(self.discrete_actions):
+                    return False, f"Discrete action index {idx} out of range [0, {len(self.discrete_actions)-1}]"
+                return True, ""
+            except (ValueError, TypeError) as e:
+                return False, f"Invalid discrete action value: {e}"
+        else:
+            try:
+                act = np.asarray(raw_action, dtype=np.float32).flatten()
+                if len(act) == 0:
+                    return False, "Action array is empty"
+                if np.any(np.isnan(act)):
+                    return False, "Action contains NaN values"
+                if np.any(np.isinf(act)):
+                    return False, "Action contains Infinity values"
+                if len(act) < 3:
+                    return False, f"Continuous action expected at least 3 elements [steer, throttle, brake], got {len(act)}"
+                return True, ""
+            except Exception as e:
+                return False, f"Failed to parse continuous action: {e}"
+
+    def decode_action(self, raw_action: Union[np.ndarray, List[float], int, float, Any]) -> Tuple[float, float, float]:
         """
         Translates raw agent action into (steer, throttle, brake) floats.
+        Guarantees finite, clamped values within configured bounds, never NaN or Inf.
         """
         if self.type == ActionSpaceType.DISCRETE:
-            idx = int(raw_action)
+            idx = 0
+            try:
+                if isinstance(raw_action, (np.ndarray, list, tuple)):
+                    if len(raw_action) > 0:
+                        val = raw_action[0]
+                    else:
+                        val = 0
+                else:
+                    val = raw_action
+                
+                if isinstance(val, (float, np.floating)):
+                    if np.isnan(val) or np.isinf(val):
+                        val = 0
+                idx = int(val)
+            except (ValueError, TypeError, OverflowError):
+                idx = 0
+
             idx = max(0, min(idx, len(self.discrete_actions) - 1))
             act = self.discrete_actions[idx]
             return float(act[0]), float(act[1]), float(act[2])
         else:
             # Continuous: [steer, throttle, brake]
-            act = np.asarray(raw_action, dtype=np.float32).flatten()
+            try:
+                act = np.asarray(raw_action, dtype=np.float32).flatten()
+            except Exception:
+                act = np.zeros(3, dtype=np.float32)
+
+            # Sanitize NaNs and Infs: NaN -> 0.0, Inf -> clamped
+            act = np.nan_to_num(act, nan=0.0, posinf=1.0, neginf=-1.0)
+
             steer = float(np.clip(act[0], self.continuous_low[0], self.continuous_high[0])) if len(act) > 0 else 0.0
             throttle = float(np.clip(act[1], self.continuous_low[1], self.continuous_high[1])) if len(act) > 1 else 0.0
             brake = float(np.clip(act[2], self.continuous_low[2], self.continuous_high[2])) if len(act) > 2 else 0.0

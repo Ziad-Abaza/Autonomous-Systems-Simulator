@@ -44,12 +44,46 @@ class SimGymEnv(gym.Env):
             self.action_space = spaces.Box(low=low, high=high, dtype=np.float32)
 
         # Configure observation space
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(obs_dim,),
-            dtype=np.float32
-        )
+        obs_schema = spec.get('observation_schema', {})
+        include_cam = obs_schema.get('include_camera_rgb', False)
+        flatten_vec = obs_schema.get('flatten_vector', True)
+
+        if flatten_vec:
+            if include_cam and obs_dim > 0:
+                self.observation_space = spaces.Dict({
+                    'vector': spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32),
+                    'image': spaces.Box(low=0, high=255, shape=(84, 84, 3), dtype=np.uint8)
+                })
+            elif include_cam and obs_dim == 0:
+                self.observation_space = spaces.Box(low=0, high=255, shape=(84, 84, 3), dtype=np.uint8)
+            else:
+                self.observation_space = spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(obs_dim,),
+                    dtype=np.float32
+                )
+        else:
+            space_dict = {}
+            if obs_schema.get('include_speed', True):
+                space_dict['speed'] = spaces.Box(low=0.0, high=100.0, shape=(), dtype=np.float32)
+            if obs_schema.get('include_velocity', True):
+                space_dict['vel_body'] = spaces.Box(low=-100.0, high=100.0, shape=(2,), dtype=np.float32)
+            if obs_schema.get('include_yaw_rate', True):
+                space_dict['yaw_rate'] = spaces.Box(low=-10.0, high=10.0, shape=(), dtype=np.float32)
+            if obs_schema.get('include_steering_angle', True):
+                space_dict['steering_angle'] = spaces.Box(low=-1.0, high=1.0, shape=(), dtype=np.float32)
+            if obs_schema.get('include_distance_from_center', True):
+                space_dict['distance_from_center'] = spaces.Box(low=-50.0, high=50.0, shape=(), dtype=np.float32)
+            if obs_schema.get('include_heading_error', True):
+                space_dict['heading_error'] = spaces.Box(low=-np.pi, high=np.pi, shape=(), dtype=np.float32)
+            if obs_schema.get('include_distance_to_checkpoint', True):
+                space_dict['distance_to_checkpoint'] = spaces.Box(low=0.0, high=1000.0, shape=(), dtype=np.float32)
+            if obs_schema.get('include_lidar_rays', True):
+                space_dict['lidar_ranges'] = spaces.Box(low=0.0, high=1.0, shape=(15,), dtype=np.float32)
+            if include_cam:
+                space_dict['camera_rgb'] = spaces.Box(low=0, high=255, shape=(84, 84, 3), dtype=np.uint8)
+            self.observation_space = spaces.Dict(space_dict)
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         super().reset(seed=seed)

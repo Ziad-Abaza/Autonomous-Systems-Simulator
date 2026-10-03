@@ -157,19 +157,28 @@ class SimulationEnvironment:
 
         return obs, info
 
-    def step(self, action: Union[np.ndarray, List[float], int, float]) -> Tuple[Union[np.ndarray, Dict[str, Any]], float, bool, bool, Dict[str, Any]]:
+    def step(self, action: Union[np.ndarray, List[float], int, float, Any]) -> Tuple[Union[np.ndarray, Dict[str, Any]], float, bool, bool, Dict[str, Any]]:
         """
         Executes one environment step.
         Returns: (obs, reward, terminated, truncated, info)
         """
         if self.is_done:
-            # If called after episode ended, reset automatically or return current state
-            return self.reset()[0], 0.0, True, False, {"warning": "Called step after episode ended"}
+            # Explicit contract: stepping after episode termination/truncation returns terminal state
+            last_obs = self._build_observation()
+            info = self._build_info_dict(
+                terminated=True,
+                truncated=True,
+                reason="invalid_call_after_done",
+                is_colliding=self.vehicle.state.is_colliding
+            )
+            info['error'] = "step() was called after episode ended. Must call reset() before stepping."
+            return last_obs, 0.0, True, True, info
 
         self.current_step += 1
         dt = self.clock.advance_fixed_step()
 
-        # 1. Decode Action
+        # 1. Action Validation & Decoding
+        action_valid, action_err = self.action_config.validate_action(action)
         steer, throttle, brake = self.action_config.decode_action(action)
         self.last_action = [steer, throttle, brake]
 
@@ -235,7 +244,8 @@ class SimulationEnvironment:
             is_on_road=is_on_road,
             heading_error=heading_error,
             checkpoint_passed=cp_passed,
-            laps_completed=self.checkpoint_tracker.laps_completed
+            laps_completed=self.checkpoint_tracker.laps_completed,
+            is_closed=self.road_def.is_closed
         )
 
         if terminated or truncated:
@@ -253,7 +263,9 @@ class SimulationEnvironment:
             reason=term_reason,
             reward_breakdown=reward_breakdown,
             track_info=track_info,
-            is_colliding=is_colliding
+            is_colliding=is_colliding,
+            action_valid=action_valid,
+            action_error=action_err
         )
 
         return obs, step_reward, terminated, truncated, info
@@ -302,15 +314,23 @@ class SimulationEnvironment:
                 features.append(st_data.get('heading_error', 0.0) / math.pi)
             if schema.include_distance_to_checkpoint:
                 features.append(min(1.0, st_data.get('distance_to_checkpoint', 0.0) / 100.0))
-            if schema.include_lidar_rays and 'ranges_norm' in lidar_data:
-                features.extend(lidar_data['ranges_norm'].tolist())
+            if schema.include_lidar_rays:
+                if 'ranges_norm' in lidar_data and lidar_data['ranges_norm'] is not None:
+                    features.extend(lidar_data['ranges_norm'].tolist())
+                else:
+                    # Pad with 1.0 (clear space) so observation vector dimension is strictly invariant
+                    features.extend([1.0] * 15)
 
             obs_vec = np.array(features, dtype=np.float32)
 
-            if schema.include_camera_rgb and camera_data is not None:
+            if schema.include_camera_rgb:
+                img_data = camera_data if camera_data is not None else np.zeros((84, 84, 3), dtype=np.uint8)
+                if len(features) == 0:
+                    # Vision-only observation
+                    return img_data
                 return {
                     'vector': obs_vec,
-                    'image': camera_data
+                    'image': img_data
                 }
             return obs_vec
 
@@ -328,10 +348,15 @@ class SimulationEnvironment:
                 obs_dict['distance_from_center'] = float(st_data.get('distance_from_center', 0.0))
             if schema.include_heading_error:
                 obs_dict['heading_error'] = float(st_data.get('heading_error', 0.0))
-            if schema.include_lidar_rays and 'ranges_norm' in lidar_data:
-                obs_dict['lidar_ranges'] = lidar_data['ranges_norm']
-            if schema.include_camera_rgb and camera_data is not None:
-                obs_dict['camera_rgb'] = camera_data
+            if schema.include_distance_to_checkpoint:
+                obs_dict['distance_to_checkpoint'] = float(st_data.get('distance_to_checkpoint', 0.0))
+            if schema.include_lidar_rays:
+                if 'ranges_norm' in lidar_data and lidar_data['ranges_norm'] is not None:
+                    obs_dict['lidar_ranges'] = lidar_data['ranges_norm']
+                else:
+                    obs_dict['lidar_ranges'] = np.ones(15, dtype=np.float32)
+            if schema.include_camera_rgb:
+                obs_dict['camera_rgb'] = camera_data if camera_data is not None else np.zeros((84, 84, 3), dtype=np.uint8)
             return obs_dict
 
     def _build_info_dict(
@@ -341,7 +366,9 @@ class SimulationEnvironment:
         reason: str,
         reward_breakdown: Optional[Dict[str, float]] = None,
         track_info: Optional[Dict[str, Any]] = None,
-        is_colliding: bool = False
+        is_colliding: bool = False,
+        action_valid: bool = True,
+        action_error: str = ""
     ) -> Dict[str, Any]:
         """Builds comprehensive telemetry and inspection info."""
         st = self.vehicle.state
@@ -356,8 +383,11 @@ class SimulationEnvironment:
             'speed': float(st.speed),
             'lateral_offset': float(track_info['lateral_offset']) if track_info else 0.0,
             'heading_error': float(track_info['heading_error']) if track_info else 0.0,
+            'road_width': float(track_info['road_width']) if track_info else 12.0,
             'is_on_road': bool(track_info['is_on_road']) if track_info else True,
             'is_colliding': is_colliding,
+            'action_valid': action_valid,
+            'action_error': action_error,
             'checkpoints_passed': self.checkpoint_tracker.total_checkpoints_passed,
             'current_checkpoint': self.checkpoint_tracker.current_index,
             'laps_completed': self.checkpoint_tracker.laps_completed,

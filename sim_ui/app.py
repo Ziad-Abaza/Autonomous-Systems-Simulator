@@ -30,8 +30,10 @@ from sim_render.offscreen import OffscreenFBO
 from sim_ui.ui_overlay import UIOverlayRenderer
 from sim_ui.hud import SimulationHUD
 from sim_ui.editor import VisualTrackEditor
+from sim_ui.inspector import EnvironmentInspector
 from sim_recorder.recorder import EpisodeRecorder
 from sim_recorder.replay import EpisodeReplayPlayer
+from sim_project.serializer import EnvironmentProject
 from sim_project.presets import (
     create_oval_circuit,
     create_serpentine_track,
@@ -102,6 +104,62 @@ class SimulationStudioApp:
         self.ui_renderer = UIOverlayRenderer(self.gl_ctx, self.width, self.height)
         self.hud = SimulationHUD()
         self.track_editor = VisualTrackEditor(self.env.road_def)
+        self.inspector = EnvironmentInspector(self.env.road_def, self.env.vehicle.config, self.env.sensors)
+
+        # Wire Inspector Callbacks
+        def do_rebuild():
+            self.env.set_road_definition(self.env.road_def)
+            if not self.headless:
+                self.renderer.load_track(self.env.track)
+            self.obs, self.step_info = self.env.reset()
+            print("[Studio] Rebuilt 3D track mesh and collision geometry.")
+        self.inspector.on_rebuild_mesh = do_rebuild
+
+        def do_save():
+            save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "presets")
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, "custom_environment.sim.json")
+            self.project.road_def = self.env.road_def
+            self.project.vehicle_config = self.env.vehicle.config
+            self.project.save(save_path)
+            print(f"[Studio] Project successfully saved to {save_path}")
+        self.inspector.on_save_project = do_save
+
+        def do_load():
+            load_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "presets", "custom_environment.sim.json")
+            if os.path.exists(load_path):
+                proj = EnvironmentProject.load(load_path)
+                self.project = proj
+                self.env.road_def = proj.road_def
+                self.env.vehicle.config = proj.vehicle_config
+                self.env.set_road_definition(proj.road_def)
+                if not self.headless:
+                    self.renderer.load_track(self.env.track)
+                self.track_editor.road_def = self.env.road_def
+                self.inspector.road_def = self.env.road_def
+                self.inspector.vehicle_config = self.env.vehicle.config
+                self.obs, self.step_info = self.env.reset()
+                print(f"[Studio] Loaded project from {load_path}")
+            else:
+                print(f"[Studio] No saved project found at {load_path}")
+        self.inspector.on_load_project = do_load
+
+        def do_new():
+            proj = create_oval_circuit()
+            self.project = proj
+            self.env.set_road_definition(proj.road_def)
+            if not self.headless:
+                self.renderer.load_track(self.env.track)
+            self.track_editor.road_def = self.env.road_def
+            self.inspector.road_def = self.env.road_def
+            self.obs, self.step_info = self.env.reset()
+            print("[Studio] Created new environment.")
+        self.inspector.on_new_project = do_new
+
+        def do_place_spawn():
+            self.track_editor.is_placing_spawn = True
+            print("[Studio] Click canvas to place spawn point.")
+        self.inspector.on_start_place_spawn = do_place_spawn
 
         # Hook synthetic camera sensor to offscreen renderer
         cam_sensor = self.env.sensors.get_sensor("rgb_camera")
@@ -273,6 +331,10 @@ class SimulationStudioApp:
                 if self.active_mode == "mode_editor":
                     self.track_editor.handle_mouse_up()
 
+            elif event.type == pygame.MOUSEWHEEL:
+                if self.active_mode == "mode_editor":
+                    self.track_editor.handle_mouse_wheel(event.y)
+
             elif event.type == pygame.MOUSEMOTION:
                 if self.active_mode == "mode_editor":
                     self.track_editor.handle_mouse_move(event.pos, (self.width * 0.5, self.height * 0.5))
@@ -304,34 +366,56 @@ class SimulationStudioApp:
 
         # Check Editor interactions if in editor mode
         if self.active_mode == "mode_editor":
-            # Check editor palette buttons on left
-            cp_idx = self.track_editor.selected_point_idx
-            cp_obj = self.env.road_def.control_points[cp_idx] if cp_idx is not None and 0 <= cp_idx < len(self.env.road_def.control_points) else None
-            ed_btns = self.hud.draw_editor_palette(self.ui_renderer.ui_surface, 15, 60, cp_idx, cp_obj, fonts)
-            for rect, action_id in ed_btns:
+            insp_w = 340
+            insp_h = min(600, self.height - 110)
+            insp_btns = self.inspector.draw(self.ui_renderer.ui_surface, 15, 55, insp_w, insp_h, fonts)
+            for rect, action_id in insp_btns:
                 if rect.collidepoint(mouse_pos):
-                    if action_id == "track_rebuild":
-                        self.env.set_road_definition(self.env.road_def)
-                        self.renderer.load_track(self.env.track)
-                        self.obs, self.step_info = self.env.reset()
-                        print("[Studio] Rebuilt 3D track mesh and collision geometry.")
-                    elif cp_obj is not None:
-                        if action_id == "cp_width_minus":
-                            cp_obj.width = max(4.0, cp_obj.width - 1.0)
-                        elif action_id == "cp_width_plus":
-                            cp_obj.width = min(30.0, cp_obj.width + 1.0)
-                        elif action_id == "cp_elev_minus":
-                            cp_obj.z -= 0.5
-                        elif action_id == "cp_elev_plus":
-                            cp_obj.z += 0.5
-                        elif action_id == "cp_delete":
-                            if len(self.env.road_def.control_points) > 3 and cp_idx is not None:
-                                self.env.road_def.control_points.pop(cp_idx)
-                                self.track_editor.selected_point_idx = None
+                    if action_id.startswith("tab_"):
+                        self.inspector.active_tab = action_id.replace("tab_", "")
+                    elif action_id.startswith("prop_minus_"):
+                        pid = action_id.replace("prop_minus_", "")
+                        step = -1.0
+                        for p in self.inspector.get_properties_for_active_tab():
+                            if p.prop_id == pid:
+                                step = -p.step
+                                break
+                        self.inspector.handle_property_change(pid, step)
+                    elif action_id.startswith("prop_plus_"):
+                        pid = action_id.replace("prop_plus_", "")
+                        step = 1.0
+                        for p in self.inspector.get_properties_for_active_tab():
+                            if p.prop_id == pid:
+                                step = p.step
+                                break
+                        self.inspector.handle_property_change(pid, step)
+                    elif action_id.startswith("prop_toggle_"):
+                        pid = action_id.replace("prop_toggle_", "")
+                        self.inspector.handle_property_change(pid, None)
+                    elif action_id.startswith("prop_enum_"):
+                        pid = action_id.replace("prop_enum_", "")
+                        self.inspector.handle_property_change(pid, None)
+                    elif action_id.startswith("prop_act_"):
+                        pid = action_id.replace("prop_act_", "")
+                        self.inspector.handle_property_change(pid, None)
+                    elif action_id == "action_rebuild_mesh":
+                        if self.inspector.on_rebuild_mesh:
+                            self.inspector.on_rebuild_mesh()
+                    elif action_id == "action_save_project":
+                        if self.inspector.on_save_project:
+                            self.inspector.on_save_project()
+                    elif action_id == "action_load_project":
+                        if self.inspector.on_load_project:
+                            self.inspector.on_load_project()
+                    elif action_id == "action_new_project":
+                        if self.inspector.on_new_project:
+                            self.inspector.on_new_project()
                     return
 
-            # Canvas click for control point selection/addition
-            self.track_editor.handle_mouse_down(mouse_pos, button, (self.width * 0.5, self.height * 0.5))
+            # Canvas click for control point selection/addition/dragging/spawn
+            if mouse_pos[0] > (insp_w + 25):
+                self.track_editor.handle_mouse_down(mouse_pos, button, (self.width * 0.5, self.height * 0.5))
+                self.inspector.select_control_point(self.track_editor.selected_point_idx)
 
         # Check Bottom Bar buttons
         bot_btns = self.hud.draw_bottom_bar(
@@ -417,12 +501,15 @@ class SimulationStudioApp:
         elif self.active_mode == "mode_editor":
             # Render 2D top-down spline editor overlay
             canvas_rect = pygame.Rect(0, 42, self.width, self.height - 87)
-            self.track_editor.draw_editor(surf, canvas_rect, fonts['small'], self.env.track.spline)
+            self.track_editor.draw_editor(
+                surf, canvas_rect, fonts['small'],
+                self.env.track.spline, self.env.track.checkpoints
+            )
 
-            # Editor control panel
-            cp_idx = self.track_editor.selected_point_idx
-            cp_obj = self.env.road_def.control_points[cp_idx] if cp_idx is not None and 0 <= cp_idx < len(self.env.road_def.control_points) else None
-            self.hud.draw_editor_palette(surf, 15, 60, cp_idx, cp_obj, fonts)
+            # Unified Environment Inspector
+            insp_w = 340
+            insp_h = min(600, self.height - 110)
+            self.inspector.draw(surf, 15, 55, insp_w, insp_h, fonts)
 
         # Bottom Bar
         self.hud.draw_bottom_bar(

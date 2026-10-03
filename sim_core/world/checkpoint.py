@@ -48,12 +48,24 @@ class CheckpointTracker:
 
         from sim_core.math_utils import segments_intersect
         if segments_intersect(prev_pos, curr_pos, gate_left, gate_right):
-            # Passed target checkpoint!
+            # Directional verification: motion vector must have positive dot product with checkpoint tangent
+            motion = curr_pos - prev_pos
+            cp_tangent = target_cp.get('tangent')
+            if cp_tangent is not None:
+                tangent_2d = Vec2(cp_tangent.x, cp_tangent.y)
+                # If motion opposes road tangent, the car is driving backwards through the gate
+                if motion.dot(tangent_2d) <= 0.0:
+                    return False, False
+
+            # Passed target checkpoint in correct forward direction!
             self.total_checkpoints_passed += 1
             self.last_cross_time = current_time
 
             lap_completed = False
-            if target_idx == 0:
+            # On closed tracks, lap completes when wrapping back to index 0.
+            # On open tracks, course completes when reaching the final checkpoint.
+            is_closed = getattr(self.track.spline, 'is_closed', True)
+            if (is_closed and target_idx == 0) or (not is_closed and target_idx == (num_cp - 1)):
                 self.laps_completed += 1
                 lap_completed = True
                 self.last_lap_time = current_time - self.lap_start_time

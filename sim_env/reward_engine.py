@@ -95,6 +95,10 @@ class RewardEngine:
             elif delta_s > track_length * 0.5:
                 delta_s -= track_length
 
+        # Sanity check: Discard discontinuous jumps / teleportation (max realistic 1-step delta at 60Hz is ~1.5m)
+        if abs(delta_s) > 5.0:
+            delta_s = 0.0
+
         self.prev_s = current_s
 
         # Forward progress reward

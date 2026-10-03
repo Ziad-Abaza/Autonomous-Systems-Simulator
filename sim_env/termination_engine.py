@@ -54,7 +54,8 @@ class TerminationEngine:
         is_on_road: bool,
         heading_error: float,
         checkpoint_passed: bool,
-        laps_completed: int
+        laps_completed: int,
+        is_closed: bool = True
     ) -> Tuple[bool, bool, str]:
         """
         Evaluates conditions.
@@ -81,7 +82,9 @@ class TerminationEngine:
         if cfg.terminate_on_wrong_direction and abs(heading_error) > max_angle_rad:
             return True, False, "wrong_direction"
 
-        # 4. Lap completion termination
+        # 4. Lap / Course completion termination
+        if not is_closed and laps_completed >= 1:
+            return True, False, "course_completed"
         if cfg.terminate_on_lap_completion and laps_completed >= cfg.laps_to_complete:
             return True, False, "lap_completed"
 

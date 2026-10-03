@@ -56,18 +56,20 @@ def run_pid_agent(host: str = "127.0.0.1", port: int = 8765, max_steps: int = 10
     episodes = 1
 
     for step in range(max_steps):
-        # Extract features from info dictionary
-        heading_err = info.get('heading_error', 0.0)
-        lat_offset = info.get('lateral_offset', 0.0)
-        speed = info.get('speed', 0.0)
-
-        # Extract LiDAR ranges for obstacle and corner preview (15 rays spanning 180 degrees)
-        if isinstance(obs, np.ndarray) and len(obs) >= 22:
-            lidar_rays = obs[7:22] * 40.0  # de-normalize from [0, 1] to meters
+        # Primary feature extraction directly from AI observation vector (with fallback to info)
+        if isinstance(obs, np.ndarray) and len(obs) >= 23:
+            speed = float(obs[0] * 45.0)
+            road_w = float(info.get('road_width', 12.0))
+            lat_offset = float(obs[5] * (road_w * 0.5))
+            heading_err = float(obs[6] * math.pi)
+            lidar_rays = obs[8:23] * 40.0  # de-normalize from [0, 1] to meters (15 rays)
             left_dist = float(np.mean(lidar_rays[10:]))
             right_dist = float(np.mean(lidar_rays[:5]))
             center_dist = float(np.min(lidar_rays[5:10]))
         else:
+            speed = float(info.get('speed', 0.0))
+            lat_offset = float(info.get('lateral_offset', 0.0))
+            heading_err = float(info.get('heading_error', 0.0))
             left_dist = 6.0
             right_dist = 6.0
             center_dist = 40.0
