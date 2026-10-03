@@ -42,7 +42,10 @@ class TrackRegistry:
     def default(cls) -> "TrackRegistry":
         reg = cls()
         for tid, fname in FILE_TRACKS.items():
-            reg.register_file(tid, TRACKS_DIR / fname,
+            path = TRACKS_DIR / fname
+            if not path.exists():
+                continue  # track file removed from the repo — skip
+            reg.register_file(tid, path,
                               tags=("train",) if tid != "smoke" else ("smoke",))
         # Generated closed loops — distinct geometries for continual
         # phases and guaranteed-unseen holdouts.

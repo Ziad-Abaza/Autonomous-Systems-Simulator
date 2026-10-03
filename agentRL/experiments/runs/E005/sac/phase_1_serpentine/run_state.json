@@ -1,0 +1,13 @@
+{
+  "timestep": 50000,
+  "episodes": 39,
+  "wall_s": 1189.76,
+  "track": "serpentine",
+  "algo": "sac",
+  "train_state": {
+    "steps": 100000,
+    "updates": 100000,
+    "nan_guards": 0,
+    "episodes": 0
+  }
+}

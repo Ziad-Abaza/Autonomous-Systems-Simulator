@@ -131,10 +131,31 @@ def run_experiment(exp_id: str, run_dir: str | None = None,
         mutator = _mutator(cfg, seeds["mutator"])
 
         if kind == "single":
-            trainer = make_trainer(factory, reg.load(cfg["track"]),
-                                   agent, tc, mutator=mutator)
-            _seed_demos(cfg, trainer.env, agent, mutator)
-            results[algo] = trainer.train()
+            track = reg.load(cfg["track"])
+            halves = int(cfg.get("resume", {}).get("halves", 1))
+            if halves == 2:
+                from dataclasses import replace as _dc_replace
+                from agentRL.checkpoints.io import save_checkpoint
+                half = tc.total_steps // 2
+                t1 = make_trainer(factory, track, agent,
+                                  _dc_replace(tc, total_steps=half),
+                                  mutator=mutator)
+                _seed_demos(cfg, t1.env, agent, mutator)
+                t1.train()
+                mid = os.path.join(str(adir), "checkpoints",
+                                   "resume_mid.pt")
+                save_checkpoint(agent, mid)
+                fresh = type(agent).load(mid)  # cold-restart equivalent
+                t2 = make_trainer(factory, track, fresh,
+                                  _dc_replace(tc, total_steps=half),
+                                  mutator=mutator)
+                results[algo] = t2.train()
+                results[algo]["resumed_from"] = mid
+            else:
+                trainer = make_trainer(factory, track,
+                                       agent, tc, mutator=mutator)
+                _seed_demos(cfg, trainer.env, agent, mutator)
+                results[algo] = trainer.train()
         elif kind == "mixed":
             tracks = [reg.load(t) for t in cfg["tracks"]]
             trainer = MixedTrackTrainer(factory, tracks, agent, tc,
@@ -147,9 +168,11 @@ def run_experiment(exp_id: str, run_dir: str | None = None,
                 holdout_tracks=cfg.get("holdouts", []),
                 eval_seeds=tuple(cfg.get("eval_seeds", (42, 43, 44))),
                 eval_max_steps=int(cfg.get("eval_max_steps", 1500)))
+            demo_steps = int(cfg.get("demos", {}).get("steps", 0))
             phases = [Phase(p["track_id"],
                             int(steps_override or p["steps"]),
-                            mutator=mutator, tag=p.get("tag", ""))
+                            mutator=mutator, tag=p.get("tag", ""),
+                            demos=int(p.get("demos", demo_steps)))
                       for p in cfg["phases"]]
             results[algo] = {"report": str(
                 adir / "continual_report.json")}

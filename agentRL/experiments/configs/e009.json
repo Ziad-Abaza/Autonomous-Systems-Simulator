@@ -1,1 +1,1 @@
-{"id":"E009","kind":"single","name":"Ablation — obs presets","algos":["sac"],"track":"oval","steps":40000,"obs_preset":"state8","seed":42,"agent_overrides":{"warmup":1500,"batch":256}}
+{"id":"E009","kind":"single","name":"Ablation - obs preset state8","algos":["sac"],"track":"oval","steps":40000,"obs_preset":"state8","seed":42,"initial_speed":8.0,"demos":{"steps":10000},"agent_overrides":{"warmup":500,"batch":256}}

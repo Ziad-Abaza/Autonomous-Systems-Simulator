@@ -1,0 +1,86 @@
+{
+  "id": "E008",
+  "kind": "eval",
+  "name": "Robustness eval - friction+noise",
+  "algo": "sac",
+  "ckpt": "agentRL/experiments/runs/E005/sac/checkpoints/phase_2_gen_loop_0.pt",
+  "tracks": [
+    "oval",
+    "serpentine"
+  ],
+  "obs_preset": "full23",
+  "mutator": {
+    "n_obstacles": [
+      0,
+      0
+    ],
+    "friction": [
+      0.7,
+      0.95
+    ],
+    "noise": [
+      1.5,
+      2.5
+    ],
+    "spawn_jitter": [
+      -2.0,
+      2.0
+    ]
+  },
+  "eval_seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "eval_max_steps": 2000,
+  "initial_speed": 8.0,
+  "results": {
+    "sac": {
+      "sac": {
+        "oval": {
+          "n_episodes": 5,
+          "mean_return": 408.6480239997537,
+          "std_return": 345.59304540977564,
+          "mean_length": 1193.8,
+          "completion_rate": 0.0,
+          "collision_rate": 0.4,
+          "off_road_rate": 0.0,
+          "wrong_direction_rate": 0.0,
+          "timeout_rate": 0.6,
+          "mean_progress": 0.3,
+          "mean_speed": 6.212961273412519,
+          "mean_lateral": 1.7451256472385697,
+          "max_lateral": 5.353330220052804,
+          "mean_heading_err": 0.3981619697095647,
+          "steer_smoothness": 0.9613569160997733,
+          "failure_classes": {
+            "collision": 2,
+            "timeout_progress": 3
+          }
+        },
+        "serpentine": {
+          "n_episodes": 5,
+          "mean_return": 139.55498314689288,
+          "std_return": 6.455775422771088,
+          "mean_length": 292.8,
+          "completion_rate": 0.0,
+          "collision_rate": 1.0,
+          "off_road_rate": 0.0,
+          "wrong_direction_rate": 0.0,
+          "timeout_rate": 0.0,
+          "mean_progress": 0.06,
+          "mean_speed": 9.891726179028165,
+          "mean_lateral": 2.4226797429988514,
+          "max_lateral": 5.146613880403938,
+          "mean_heading_err": 0.07706048116435389,
+          "steer_smoothness": 0.8518016010136569,
+          "failure_classes": {
+            "collision": 5
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "E003",
+  "kind": "single",
+  "name": "Obstacle avoidance - oval + mutator",
+  "algo": "sac",
+  "track": "oval",
+  "steps": 60000,
+  "obs_preset": "full23",
+  "seed": 42,
+  "eval_episodes": 3,
+  "initial_speed": 8.0,
+  "demos": {
+    "steps": 15000
+  },
+  "mutator": {
+    "n_obstacles": [
+      0,
+      3
+    ],
+    "min_gap_m": 15.0
+  },
+  "agent_overrides": {
+    "warmup": 500,
+    "batch": 256
+  },
+  "results": {
+    "sac": {
+      "timesteps": 60000,
+      "episodes": 126,
+      "run_dir": "D:\\coding\\projects\\Simulation\\agentRL\\experiments\\runs\\E003\\sac",
+      "wall_s": 1616.63
+    }
+  }
+}

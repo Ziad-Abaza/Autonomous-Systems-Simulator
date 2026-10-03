@@ -1,0 +1,74 @@
+{
+  "id": "E007",
+  "kind": "eval",
+  "name": "Obstacle generalization eval",
+  "algo": "sac",
+  "ckpt": "agentRL/experiments/runs/E005/sac/checkpoints/phase_2_gen_loop_0.pt",
+  "tracks": [
+    "oval",
+    "serpentine"
+  ],
+  "obs_preset": "full23",
+  "mutator": {
+    "n_obstacles": [
+      2,
+      5
+    ],
+    "min_gap_m": 12.0
+  },
+  "eval_seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "eval_max_steps": 2000,
+  "initial_speed": 8.0,
+  "results": {
+    "sac": {
+      "sac": {
+        "oval": {
+          "n_episodes": 5,
+          "mean_return": 416.5501653285075,
+          "std_return": 210.60021986138202,
+          "mean_length": 760.4,
+          "completion_rate": 0.0,
+          "collision_rate": 1.0,
+          "off_road_rate": 0.0,
+          "wrong_direction_rate": 0.0,
+          "timeout_rate": 0.0,
+          "mean_progress": 0.3,
+          "mean_speed": 9.22922801789193,
+          "mean_lateral": 1.7747648652887047,
+          "max_lateral": 5.193322993123825,
+          "mean_heading_err": 0.1830348089272525,
+          "steer_smoothness": 0.8864077500872976,
+          "failure_classes": {
+            "collision": 5
+          }
+        },
+        "serpentine": {
+          "n_episodes": 5,
+          "mean_return": 153.64823017827828,
+          "std_return": 3.165845425093647,
+          "mean_length": 281.2,
+          "completion_rate": 0.0,
+          "collision_rate": 1.0,
+          "off_road_rate": 0.0,
+          "wrong_direction_rate": 0.0,
+          "timeout_rate": 0.0,
+          "mean_progress": 0.1,
+          "mean_speed": 10.731916229750109,
+          "mean_lateral": 1.8242102476401765,
+          "max_lateral": 5.139827447712625,
+          "mean_heading_err": 0.10612001208854385,
+          "steer_smoothness": 0.7162834125806778,
+          "failure_classes": {
+            "collision": 5
+          }
+        }
+      }
+    }
+  }
+}

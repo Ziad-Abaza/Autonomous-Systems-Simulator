@@ -1,0 +1,377 @@
+{
+  "phases": [
+    {
+      "i": 0,
+      "track_id": "oval",
+      "steps": 50000,
+      "tag": ""
+    },
+    {
+      "i": 1,
+      "track_id": "serpentine",
+      "steps": 50000,
+      "tag": ""
+    },
+    {
+      "i": 2,
+      "track_id": "gen_loop_0",
+      "steps": 50000,
+      "tag": ""
+    }
+  ],
+  "holdouts": [
+    "gen_loop_4",
+    "gen_loop_5"
+  ],
+  "cells": {
+    "phase_0": {
+      "oval": {
+        "n_episodes": 3,
+        "mean_return": 164.2797296356789,
+        "std_return": 0.0,
+        "mean_length": 536.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.125,
+        "mean_speed": 7.13885354334175,
+        "mean_lateral": 1.3065487780085931,
+        "max_lateral": 4.237453072291287,
+        "mean_heading_err": 0.383966314473968,
+        "steer_smoothness": 0.9645522388059702,
+        "failure_classes": {
+          "collision": 3
+        }
+      },
+      "serpentine": {
+        "n_episodes": 3,
+        "mean_return": 637.6384380424438,
+        "std_return": 0.0,
+        "mean_length": 1308.0,
+        "completion_rate": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 1.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.3499999999999999,
+        "mean_speed": 8.45591462051832,
+        "mean_lateral": 1.3320178612991787,
+        "max_lateral": 3.719575638907687,
+        "mean_heading_err": 0.30919843156133164,
+        "steer_smoothness": 0.9694189602446484,
+        "failure_classes": {
+          "wrong_direction": 3
+        }
+      },
+      "gen_loop_0": {
+        "n_episodes": 3,
+        "mean_return": 140.4217226798014,
+        "std_return": 0.0,
+        "mean_length": 443.0,
+        "completion_rate": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 1.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.125,
+        "mean_speed": 6.795881167517945,
+        "mean_lateral": 1.9450867201400677,
+        "max_lateral": 3.969502477231896,
+        "mean_heading_err": 0.5575749974973938,
+        "steer_smoothness": 0.9864559819413092,
+        "failure_classes": {
+          "wrong_direction": 3
+        }
+      },
+      "gen_loop_4": {
+        "n_episodes": 3,
+        "mean_return": 58.05751570752947,
+        "std_return": 0.0,
+        "mean_length": 338.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.0625,
+        "mean_speed": 6.143040539938707,
+        "mean_lateral": 1.789067520676255,
+        "max_lateral": 4.242416503902822,
+        "mean_heading_err": 0.4882090822763468,
+        "steer_smoothness": 0.9911242603550295,
+        "failure_classes": {
+          "collision": 3
+        }
+      },
+      "gen_loop_5": {
+        "n_episodes": 3,
+        "mean_return": 77.73751626606543,
+        "std_return": 0.0,
+        "mean_length": 329.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.0625,
+        "mean_speed": 7.243827411430491,
+        "mean_lateral": 1.6570115736844375,
+        "max_lateral": 4.255536862928983,
+        "mean_heading_err": 0.4329672493638564,
+        "steer_smoothness": 1.0,
+        "failure_classes": {
+          "collision": 3
+        }
+      }
+    },
+    "phase_1": {
+      "oval": {
+        "n_episodes": 3,
+        "mean_return": 112.42722442399925,
+        "std_return": 0.0,
+        "mean_length": 368.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.125,
+        "mean_speed": 7.632559080033708,
+        "mean_lateral": 2.09040789145284,
+        "max_lateral": 5.033943009306975,
+        "mean_heading_err": 0.3201782705635134,
+        "steer_smoothness": 0.9293478260869565,
+        "failure_classes": {
+          "collision": 3
+        }
+      },
+      "serpentine": {
+        "n_episodes": 3,
+        "mean_return": 196.1221172152385,
+        "std_return": 0.0,
+        "mean_length": 465.0,
+        "completion_rate": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 1.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.10000000000000002,
+        "mean_speed": 8.101915912884749,
+        "mean_lateral": 1.9100640152479553,
+        "max_lateral": 3.6079242832404534,
+        "mean_heading_err": 0.3698532944414287,
+        "steer_smoothness": 0.9741935483870968,
+        "failure_classes": {
+          "wrong_direction": 3
+        }
+      },
+      "gen_loop_0": {
+        "n_episodes": 3,
+        "mean_return": 65.20062982748728,
+        "std_return": 0.0,
+        "mean_length": 1350.0,
+        "completion_rate": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 1.0,
+        "mean_progress": 0.0625,
+        "mean_speed": 1.99902849200594,
+        "mean_lateral": 1.7119526557793046,
+        "max_lateral": 4.693953440863596,
+        "mean_heading_err": 1.2719408268048076,
+        "steer_smoothness": 0.9888888888888889,
+        "failure_classes": {
+          "no_progress": 3
+        }
+      },
+      "gen_loop_4": {
+        "n_episodes": 3,
+        "mean_return": 1129.3059989085318,
+        "std_return": 0.0,
+        "mean_length": 1500.0,
+        "completion_rate": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 1.0,
+        "mean_progress": 0.875,
+        "mean_speed": 11.891708855670467,
+        "mean_lateral": 2.39923185173656,
+        "max_lateral": 3.2152741391660213,
+        "mean_heading_err": 0.09643128756580328,
+        "steer_smoothness": 0.9853333333333333,
+        "failure_classes": {
+          "timeout_progress": 3
+        }
+      },
+      "gen_loop_5": {
+        "n_episodes": 3,
+        "mean_return": 132.50206562121036,
+        "std_return": 0.0,
+        "mean_length": 303.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.125,
+        "mean_speed": 9.9877272841106,
+        "mean_lateral": 2.359520521988934,
+        "max_lateral": 4.404579617919636,
+        "mean_heading_err": 0.3249711919986187,
+        "steer_smoothness": 0.9240924092409241,
+        "failure_classes": {
+          "collision": 3
+        }
+      }
+    },
+    "phase_2": {
+      "oval": {
+        "n_episodes": 3,
+        "mean_return": 477.5427801873064,
+        "std_return": 5.684341886080802e-14,
+        "mean_length": 536.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.375,
+        "mean_speed": 16.069344600633993,
+        "mean_lateral": 1.4055644080430707,
+        "max_lateral": 5.091320766024591,
+        "mean_heading_err": 0.12808191407708727,
+        "steer_smoothness": 0.7985074626865671,
+        "failure_classes": {
+          "collision": 3
+        }
+      },
+      "serpentine": {
+        "n_episodes": 3,
+        "mean_return": 170.87250877908022,
+        "std_return": 0.0,
+        "mean_length": 249.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.10000000000000002,
+        "mean_speed": 14.218877932478646,
+        "mean_lateral": 2.019750823603511,
+        "max_lateral": 4.825425646285657,
+        "mean_heading_err": 0.09901868664924651,
+        "steer_smoothness": 0.6265060240963856,
+        "failure_classes": {
+          "collision": 3
+        }
+      },
+      "gen_loop_0": {
+        "n_episodes": 3,
+        "mean_return": -711.0181006925665,
+        "std_return": 0.0,
+        "mean_length": 1500.0,
+        "completion_rate": 0.0,
+        "collision_rate": 0.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 1.0,
+        "mean_progress": 0.3125,
+        "mean_speed": 4.171388358685158,
+        "mean_lateral": 1.4915854864501317,
+        "max_lateral": 3.7511113095232678,
+        "mean_heading_err": 1.443842756024792,
+        "steer_smoothness": 0.98,
+        "failure_classes": {
+          "timeout_progress": 3
+        }
+      },
+      "gen_loop_4": {
+        "n_episodes": 3,
+        "mean_return": 327.06965747952046,
+        "std_return": 0.0,
+        "mean_length": 407.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.25,
+        "mean_speed": 14.812599632289414,
+        "mean_lateral": 1.9807336029592335,
+        "max_lateral": 4.325216608089025,
+        "mean_heading_err": 0.16588681827075658,
+        "steer_smoothness": 0.9336609336609336,
+        "failure_classes": {
+          "collision": 3
+        }
+      },
+      "gen_loop_5": {
+        "n_episodes": 3,
+        "mean_return": 478.6633270620793,
+        "std_return": 0.0,
+        "mean_length": 1158.0,
+        "completion_rate": 0.0,
+        "collision_rate": 1.0,
+        "off_road_rate": 0.0,
+        "wrong_direction_rate": 0.0,
+        "timeout_rate": 0.0,
+        "mean_progress": 0.375,
+        "mean_speed": 7.827839935309945,
+        "mean_lateral": 2.312754496909455,
+        "max_lateral": 5.362276872618004,
+        "mean_heading_err": 0.5586398690179958,
+        "steer_smoothness": 0.9490500863557858,
+        "failure_classes": {
+          "collision": 3
+        }
+      }
+    }
+  },
+  "derived": {
+    "forgetting": {
+      "oval": 0.0,
+      "gen_loop_4": 0.0,
+      "serpentine": -25.24960843615827,
+      "gen_loop_0": 0.0,
+      "gen_loop_5": 0.0
+    },
+    "retention_final": {
+      "oval": 477.5427801873064,
+      "gen_loop_4": 327.06965747952046,
+      "serpentine": 170.87250877908022,
+      "gen_loop_0": -711.0181006925665,
+      "gen_loop_5": 478.6633270620793
+    },
+    "transfer": {
+      "serpentine": -441.5163208272053,
+      "gen_loop_0": -776.2187305200538
+    }
+  },
+  "rehearsal": {
+    "track_order": [
+      "oval",
+      "serpentine",
+      "gen_loop_0"
+    ],
+    "current": "gen_loop_0",
+    "sizes": {
+      "oval": 65000,
+      "serpentine": 60000,
+      "gen_loop_0": 60000
+    },
+    "rehearsal_fraction": 0.25
+  },
+  "agent": {
+    "algo_id": "sac",
+    "train_state": {
+      "steps": 150000,
+      "updates": 150000,
+      "nan_guards": 0,
+      "episodes": 0
+    }
+  }
+}
