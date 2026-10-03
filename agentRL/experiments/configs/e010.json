@@ -1,0 +1,1 @@
+{"id":"E010","kind":"single","name":"Resume integrity check","algo":"sac","track":"oval","steps":30000,"obs_preset":"full23","seed":42,"resume":{"halves":2},"agent_overrides":{"warmup":1500,"batch":256}}

@@ -47,6 +47,19 @@ def test_nan_inf_handling():
     assert np.isfinite(env).all()
 
 
+def test_pos_only_brake():
+    """Brake channel is one-sided: raw<0 = brakes released (brake>=0.1
+    parks the car in this sim — affine mapping causes permanent stalls)."""
+    a = ActionAdapter(low=np.array([-1.0, 0.0, 0.0]),
+                      high=np.array([1.0, 1.0, 1.0]), pos_only=(2,))
+    env = a.to_env(np.array([0.0, 0.0, -1.0]))
+    assert env[2] == 0.0, "negative raw must release brakes"
+    env = a.to_env(np.array([0.0, 0.0, 0.4]))
+    assert abs(env[2] - 0.4) < 1e-6
+    back = a.from_env(env)
+    assert abs(back[2] - 0.4) < 1e-6
+
+
 def test_prev_action_tracking():
     a = _adapter()
     assert a.prev_action is None

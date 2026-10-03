@@ -263,6 +263,59 @@ class OnPolicyTrainer:
                 "wall_s": round(time.time() - t0, 2)}
 
 
+class TrackSampler:
+    """Multi-track env pool: samples a cached env per episode.
+
+    Env instances are built once per track and reused — the sampler only
+    decides which track the next episode runs on. The rehearsal buffer
+    rotates via memory.begin_track(track_id) on each switch.
+    """
+
+    def __init__(self, factory: EnvFactory, tracks: list[TrackSpec],
+                 seed: int):
+        self.tracks = list(tracks)
+        self.envs = {t.track_id: factory.build(t, seed=seed + i * 101)
+                     for i, t in enumerate(tracks)}
+        for t in self.tracks:
+            setattr(self.envs[t.track_id], "_sampler_track", t.track_id)
+        self._rng = np.random.default_rng(seed)
+
+    def next(self):
+        t = self.tracks[int(self._rng.integers(len(self.tracks)))]
+        return self.envs[t.track_id]
+
+
+class MixedTrackTrainer(OffPolicyTrainer):
+    """Off-policy trainer that samples a track per episode (E004)."""
+
+    def __init__(self, factory: EnvFactory, tracks: list[TrackSpec],
+                 agent: BaseRLAgent, cfg: TrainConfig,
+                 mutator: ScenarioMutator | None = None,
+                 eval_fn=None):
+        self.sampler = TrackSampler(factory, tracks, cfg.seed)
+        super().__init__(factory, tracks[0], agent, cfg, mutator, eval_fn)
+
+    def _new_episode(self) -> np.ndarray:
+        self.env = self.sampler.next()
+        mem = getattr(self.agent, "memory", None)
+        if mem is not None and hasattr(mem, "begin_track"):
+            mem.begin_track(self.env._sampler_track)
+        if self.mutator is not None:
+            self.mutator.draw_and_apply(self.env)
+        obs, _ = self.env.reset()
+        self.agent.encoder.reset()
+        self.agent.adapter.reset()
+        self._ep = {"return": 0.0, "len": 0, "speed": 0.0,
+                    "steer_prev": 0.0, "steer_dsq": 0.0}
+        return np.asarray(obs, dtype=np.float32)
+
+    def _episode_metrics(self, info, timestep):
+        m = super()._episode_metrics(info, timestep)
+        m["track"] = getattr(self.env, "_sampler_track",
+                             self.track.track_id)
+        return m
+
+
 def make_trainer(factory: EnvFactory, track: TrackSpec,
                  agent: BaseRLAgent, cfg: TrainConfig,
                  mutator: ScenarioMutator | None = None,

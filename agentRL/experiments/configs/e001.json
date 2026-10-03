@@ -1,0 +1,1 @@
+{"id":"E001","kind":"single","name":"Baseline learnability — oval","algos":["sac","ppo"],"track":"oval","steps":60000,"obs_preset":"full23","seed":42,"eval_episodes":3,"agent_overrides":{"warmup":2000,"batch":256}}

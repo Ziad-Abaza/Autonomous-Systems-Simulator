@@ -34,8 +34,9 @@ class BaseRLAgent(ABC):
         self.act_space = {"low": np.asarray(act_space["low"], np.float32),
                           "high": np.asarray(act_space["high"], np.float32)}
         self.cfg = cfg
-        self.adapter = ActionAdapter(self.act_space["low"],
-                                     self.act_space["high"])
+        self.adapter = ActionAdapter(
+            self.act_space["low"], self.act_space["high"],
+            pos_only=tuple(act_space.get("pos_only", ())))
         self.encoder = encoder or ObsEncoder(obs_spec)
         self.memory: Any = None
         self.train_state: dict[str, int | float] = {
