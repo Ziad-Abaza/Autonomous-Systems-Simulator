@@ -37,13 +37,18 @@ class IMUSensor(BaseSensor):
         self.gyro_bias = np.zeros(3, dtype=np.float32)
 
     def _generate_raw_sample(self, context: Any, rng: np.random.Generator) -> Dict[str, np.ndarray]:
+        import math
         vehicle = context['vehicle']
         st = vehicle.state
 
-        # Accelerometer body axes: ax, ay, az (including gravity +9.81 on Z)
-        ax = float(st.accel_body.x)
-        ay = float(st.accel_body.y)
-        az = 9.81
+        # Accelerometer body axes: ax, ay, az. accel_body is specific force
+        # (proper acceleration); gravity projects onto the tilted body axes
+        # through the quasi-static roll/pitch attitude.
+        # Convention: pitch > 0 = nose up, roll > 0 = right side down.
+        g = 9.81
+        ax = float(st.accel_body.x) + g * math.sin(st.pitch)
+        ay = float(st.accel_body.y) + g * math.sin(st.roll)
+        az = g * math.cos(st.pitch) * math.cos(st.roll)
 
         # Gyroscope rates: roll_rate, pitch_rate, yaw_rate
         p_rate = 0.0

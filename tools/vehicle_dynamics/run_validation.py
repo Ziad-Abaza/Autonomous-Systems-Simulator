@@ -54,7 +54,7 @@ def build_manifest(config: VehicleConfig, dt: float, speed: float) -> Dict:
         "physics_hz": 1.0 / dt,
         "surface_friction": 1.0,
         "target_speed_ms": speed,
-        "tire_model": "saturating-tanh single-track",
+        "tire_model": config.tire_model,
         "vehicle_config": config.to_dict(),
         "parameters_note": "Generic passenger-vehicle representative parameters; "
                            "not measured from a real vehicle.",
@@ -164,6 +164,8 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=20.0)
     ap.add_argument("--hz", type=float, default=60.0)
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
+    ap.add_argument("--tire-model", default="bicycle",
+                    choices=["bicycle", "pacejka4"])
     ap.add_argument("--out", default=os.path.join(
         REPO_ROOT, "benchmarks", "vehicle_dynamics"))
     args = ap.parse_args()
@@ -173,7 +175,8 @@ def main() -> None:
         return
 
     print(f"[vehicle-dynamics] Running validation suite -> tag '{args.tag}'")
-    run_suite(args.tag, args.speed, 1.0 / args.hz, args.out)
+    run_suite(args.tag, args.speed, 1.0 / args.hz, args.out,
+              config=VehicleConfig(tire_model=args.tire_model))
     print(f"[vehicle-dynamics] Results written to "
           f"{os.path.join(args.out, args.tag)}")
 

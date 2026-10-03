@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
-from sim_core.math_utils import Vec3
+from sim_core.math_utils import Vec2, Vec3
 from sim_core.vehicle.vehicle_config import VehicleConfig
 from sim_core.vehicle.vehicle_model import VehicleModel
 
@@ -25,6 +25,7 @@ SERIES_FIELDS = (
     "t", "vx", "vy", "speed", "yaw", "yaw_rate", "steering_angle",
     "ax", "ay", "pos_x", "pos_y", "sideslip", "alpha_f", "alpha_r",
     "fy_f", "fy_r", "f_long", "throttle", "brake", "steer_cmd",
+    "util_f", "util_r", "mu_surface", "roll", "pitch",
 )
 
 
@@ -63,6 +64,8 @@ def run_maneuver(
     initial_speed: float = 0.0,
     surface_friction: float = 1.0,
     pre_roll_s: float = 0.0,
+    surface_fn: Optional[Callable[[float], float]] = None,
+    bias_fn: Optional[Callable[[float], Vec2]] = None,
 ) -> RunResult:
     """
     Runs one deterministic maneuver.
@@ -70,6 +73,10 @@ def run_maneuver(
     pre_roll_s: seconds of zero-steering full-speed stabilization driven
     before t=0 of the recorded window, so tests can start at a target
     speed without measuring the spin-up transient.
+    surface_fn: optional t -> local surface friction multiplier (for
+        friction-transition tests; overrides surface_friction).
+    bias_fn: optional t -> Vec2 world-frame accel bias (grade/banking
+        gravity components).
     """
     vehicle = VehicleModel(config or VehicleConfig())
     vehicle.reset(pos=Vec3(0.0, 0.0, 0.0), yaw=0.0, initial_speed=initial_speed)
@@ -84,10 +91,15 @@ def run_maneuver(
     for i in range(n):
         t = i * dt
         steer, throttle, brake = script(t)
-        vehicle.step(steer, throttle, brake, dt, surface_friction)
+        mu_s = surface_fn(t) if surface_fn is not None else surface_friction
+        bias = bias_fn(t) if bias_fn is not None else None
+        vehicle.step(steer, throttle, brake, dt, mu_s, world_accel_bias=bias)
         st = vehicle.state
 
-        alpha_f, alpha_r, fy_f, fy_r = _tire_metrics(vehicle, surface_friction)
+        alpha_f, alpha_r, fy_f, fy_r = _tire_metrics(vehicle, mu_s)
+        cfg = vehicle.config
+        cap_f = max(1.0, cfg.tire_friction * mu_s * st.fz_front)
+        cap_r = max(1.0, cfg.tire_friction * mu_s * st.fz_rear)
         s = result.series
         s["t"].append(t)
         s["vx"].append(st.vel_body.x)
@@ -109,6 +121,11 @@ def run_maneuver(
         s["throttle"].append(throttle)
         s["brake"].append(brake)
         s["steer_cmd"].append(steer)
+        s["util_f"].append(math.hypot(st.fx_f, fy_f) / cap_f)
+        s["util_r"].append(math.hypot(st.fx_r, fy_r) / cap_r)
+        s["mu_surface"].append(mu_s)
+        s["roll"].append(st.roll)
+        s["pitch"].append(st.pitch)
 
     result.metrics = compute_metrics(result)
     return result
@@ -157,6 +174,11 @@ def compute_metrics(r: RunResult) -> Dict[str, float]:
         "peak_alpha_r_deg": math.degrees(peak("alpha_r")),
         "peak_fy_f_n": peak("fy_f"),
         "peak_fy_r_n": peak("fy_r"),
+        "peak_util_f": peak("util_f"),
+        "peak_util_r": peak("util_r"),
+        "peak_ay_g": peak("ay") / 9.81,
+        "peak_roll_deg": math.degrees(peak("roll")),
+        "peak_pitch_deg": math.degrees(peak("pitch")),
         "mean_curvature_1pm": (yaw_change / path_len) if path_len > 1e-6 else 0.0,
         "lateral_drift_m": abs(final("pos_y")),
     }

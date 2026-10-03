@@ -13,7 +13,7 @@ from sim_core.math_utils import Vec2, Vec3, clamp, normalize_angle
 
 class SplinePoint:
     """A sampled point along the parameterized spline."""
-    __slots__ = ('pos', 'tangent', 'normal', 's', 'width', 'elevation', 'banking')
+    __slots__ = ('pos', 'tangent', 'normal', 's', 'width', 'elevation', 'banking', 'friction')
 
     def __init__(
         self,
@@ -23,7 +23,8 @@ class SplinePoint:
         s: float,
         width: float,
         elevation: float,
-        banking: float
+        banking: float,
+        friction: float = 1.0
     ):
         self.pos = pos
         self.tangent = tangent
@@ -31,7 +32,8 @@ class SplinePoint:
         self.s = s            # Arc-length distance from start
         self.width = width    # Road width at this point
         self.elevation = elevation
-        self.banking = banking
+        self.banking = banking   # degrees; >0 = left edge raised
+        self.friction = friction # local surface mu multiplier
 
 
 class TrackSpline:
@@ -50,7 +52,8 @@ class TrackSpline:
     ) -> None:
         """
         Builds high-resolution spline samples from a list of control point dictionaries:
-        Each dict has: {'x': float, 'y': float, 'z': float, 'width': float, 'banking': float}
+        Each dict has: {'x': float, 'y': float, 'z': float, 'width': float,
+                        'banking': float, 'friction': float}
         """
         if len(control_points) < 3:
             self.samples = []
@@ -61,6 +64,7 @@ class TrackSpline:
         raw_pts: List[Vec3] = []
         widths: List[float] = []
         bankings: List[float] = []
+        frictions: List[float] = []
 
         for cp in control_points:
             x = float(cp.get('x', 0.0))
@@ -68,14 +72,17 @@ class TrackSpline:
             z = float(cp.get('z', 0.0))
             w = float(cp.get('width', 10.0))
             b = float(cp.get('banking', 0.0))
+            f = float(cp.get('friction', 1.0))
             raw_pts.append(Vec3(x, y, z))
             widths.append(w)
             bankings.append(b)
+            frictions.append(f)
 
         # Generate dense Catmull-Rom interpolation
         dense_positions: List[Vec3] = []
         dense_widths: List[float] = []
         dense_bankings: List[float] = []
+        dense_frictions: List[float] = []
 
         subdivisions = 40
         num_segments = n if self.is_closed else (n - 1)
@@ -90,6 +97,8 @@ class TrackSpline:
                 w2 = widths[(i + 1) % n]
                 b1 = bankings[i % n]
                 b2 = bankings[(i + 1) % n]
+                f1 = frictions[i % n]
+                f2 = frictions[(i + 1) % n]
             else:
                 p0 = raw_pts[max(0, i - 1)]
                 p1 = raw_pts[i]
@@ -99,6 +108,8 @@ class TrackSpline:
                 w2 = widths[min(n - 1, i + 1)]
                 b1 = bankings[i]
                 b2 = bankings[min(n - 1, i + 1)]
+                f1 = frictions[i]
+                f2 = frictions[min(n - 1, i + 1)]
 
             for step in range(subdivisions):
                 if not self.is_closed and i == num_segments - 1 and step == subdivisions - 1:
@@ -108,18 +119,22 @@ class TrackSpline:
                 pos = self._catmull_rom(p0, p1, p2, p3, t)
                 w = w1 + (w2 - w1) * t
                 b = b1 + (b2 - b1) * t
+                fr = f1 + (f2 - f1) * t
                 dense_positions.append(pos)
                 dense_widths.append(w)
                 dense_bankings.append(b)
+                dense_frictions.append(fr)
 
         if self.is_closed:
             dense_positions.append(dense_positions[0])
             dense_widths.append(dense_widths[0])
             dense_bankings.append(dense_bankings[0])
+            dense_frictions.append(dense_frictions[0])
         else:
             dense_positions.append(raw_pts[-1])
             dense_widths.append(widths[-1])
             dense_bankings.append(bankings[-1])
+            dense_frictions.append(frictions[-1])
 
         # Arc-length parameterization
         arc_lengths: List[float] = [0.0]
@@ -147,10 +162,12 @@ class TrackSpline:
                 pos = dense_positions[0]
                 width = dense_widths[0]
                 banking = dense_bankings[0]
+                friction = dense_frictions[0]
             elif idx >= len(arc_lengths):
                 pos = dense_positions[-1]
                 width = dense_widths[-1]
                 banking = dense_bankings[-1]
+                friction = dense_frictions[-1]
             else:
                 s0 = arc_lengths[idx - 1]
                 s1 = arc_lengths[idx]
@@ -158,6 +175,7 @@ class TrackSpline:
                 pos = dense_positions[idx - 1] + (dense_positions[idx] - dense_positions[idx - 1]) * frac
                 width = dense_widths[idx - 1] + (dense_widths[idx] - dense_widths[idx - 1]) * frac
                 banking = dense_bankings[idx - 1] + (dense_bankings[idx] - dense_bankings[idx - 1]) * frac
+                friction = dense_frictions[idx - 1] + (dense_frictions[idx] - dense_frictions[idx - 1]) * frac
 
             uniform_samples.append(SplinePoint(
                 pos=pos,
@@ -166,7 +184,8 @@ class TrackSpline:
                 s=target_s,
                 width=width,
                 elevation=pos.z,
-                banking=banking
+                banking=banking,
+                friction=friction
             ))
 
         # Compute accurate tangent and normal vectors

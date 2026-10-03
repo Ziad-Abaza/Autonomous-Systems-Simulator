@@ -69,3 +69,51 @@ def test_vehicle_obb_and_wheels():
     assert len(wheels) == 4
     for w_pos, steer in wheels:
         assert isinstance(w_pos, Vec3)
+
+
+# ---------------------------------------------------------------- pacejka4
+
+def test_pacejka4_normal_regime_matches_bicycle():
+    """4-wheel Pacejka must agree with the axle model in linear regime."""
+    results = {}
+    for tm in ("bicycle", "pacejka4"):
+        car = VehicleModel(VehicleConfig(tire_model=tm))
+        car.reset(pos=Vec3(0, 0, 0), yaw=0.0, initial_speed=20.0)
+        for _ in range(600):
+            car.step(steering_cmd=-0.10, throttle_cmd=0.0, brake_cmd=0.0,
+                     dt=1.0 / 60.0)
+        results[tm] = car.state.yaw_rate
+    assert abs(results["pacejka4"] - results["bicycle"]) < 0.05
+
+
+def test_pacejka4_lateral_load_transfer():
+    """Cornering must shift normal load to the outside wheels."""
+    car = VehicleModel(VehicleConfig(tire_model="pacejka4"))
+    car.reset(pos=Vec3(0, 0, 0), yaw=0.0, initial_speed=20.0)
+    for _ in range(300):
+        car.step(steering_cmd=-0.12, throttle_cmd=0.0, brake_cmd=0.0,
+                 dt=1.0 / 60.0)
+    fz = car.state.fz_wheels
+    assert all(f > 0.0 for f in fz)
+    assert abs(fz[0] - fz[1]) > 100.0 or abs(fz[2] - fz[3]) > 100.0
+    assert abs(sum(fz) - 1200.0 * 9.81) < 500.0
+
+
+def test_pacejka4_post_peak_decay():
+    """Past peak slip the magic formula must shed force, not plateau."""
+    car = VehicleModel(VehicleConfig(tire_model="pacejka4"))
+    car.reset(pos=Vec3(0, 0, 0), yaw=0.0, initial_speed=20.0)
+    g = 9.81
+    fz_f = 1200 * g * 0.48
+    fz_r = 1200 * g * 0.52
+    forces = []
+    for vy in (3.0, 6.0, 15.0, 22.0):
+        car.state.alpha_w_eff = [0.0] * 4
+        car.state.accel_body.x = 0.0
+        for _ in range(400):
+            car._pacejka4(20.0, vy, 0.0, 20.0, fz_f, fz_r, fz_f, fz_r,
+                          1.0, 80000.0, 85000.0, 0.0, 0.0, 1 / 240, 20.0)
+        forces.append(-car.state.fy_wheels[0])
+    peak = max(forces)
+    assert forces[-1] < peak * 0.995  # real decay, not a saturating cap
+

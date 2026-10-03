@@ -92,6 +92,12 @@ class SimulationRenderer3D:
         if self.mesh_barriers:
             self.mesh_barriers.release()
 
+        # The ground plane must sit below the LOWEST road surface point or
+        # it occludes any road authored below z=0 (tracks with negative
+        # elevation render as a hole in the asphalt). Keep a full metre of
+        # margin so banked road edges and curb skirts stay above it.
+        self.ground_z = min(0.0, float(track.min_bounds.z)) - 1.0
+
         # Road
         self.mesh_road = MeshBuilder.create_road_mesh(
             self.ctx, self.prog_road,
@@ -176,9 +182,12 @@ class SimulationRenderer3D:
 
         light_dir = (-0.4, 0.5, 0.8)
 
-        # 1. Render Ground Plane
+        # 1. Render Ground Plane (sunk below the track's lowest road vertex;
+        #    ground_z is set by load_track, defaulting to the legacy -0.05
+        #    plane offset only before any track loads)
         if self.mesh_ground:
             model_g = np.identity(4, dtype=np.float32)
+            model_g[2, 3] = getattr(self, 'ground_z', -0.05) + 0.05
             mvp_g = vp @ model_g
             self.prog_standard['u_mvp'].write(mvp_g.T.tobytes())
             self.prog_standard['u_model'].write(model_g.T.tobytes())
@@ -250,7 +259,7 @@ class SimulationRenderer3D:
         if show_lidar_rays:
             lidar_sensor = sensors.get_sensor("lidar_rays")
             if lidar_sensor and hasattr(lidar_sensor, 'ray_visuals') and lidar_sensor.ray_visuals:
-                self._render_lidar_rays(lidar_sensor.ray_visuals, st.pos.z + 0.35, vp)
+                self._render_lidar_rays(lidar_sensor.ray_visuals, st.pos.z + 1.4, vp)
 
     def _render_vehicle(self, vehicle: VehicleModel, vp: np.ndarray, light_dir: tuple, ambient: float) -> None:
         st = vehicle.state
@@ -258,8 +267,11 @@ class SimulationRenderer3D:
         # Vehicle body color: changes to bright orange-red on collision!
         car_color = (0.9, 0.15, 0.15) if st.is_colliding else (0.1, 0.55, 0.95)  # Bright blue or collision red
 
-        # 1. Lower chassis
-        m_chassis = self._create_transform_matrix(st.pos.x, st.pos.y, st.pos.z + 0.35, st.yaw)
+        # st.pos.z is the road surface height under the vehicle (the planar
+        # physics model carries no z state). Mesh origins are box centers,
+        # so each part is raised by its own half height plus ride height.
+        # 1. Lower chassis (0.6 m tall -> bottom sits 0.2 m above the road)
+        m_chassis = self._create_transform_matrix(st.pos.x, st.pos.y, st.pos.z + 0.5, st.yaw)
         mvp_chassis = vp @ m_chassis
         self.prog_standard['u_mvp'].write(mvp_chassis.T.tobytes())
         self.prog_standard['u_model'].write(m_chassis.T.tobytes())
@@ -274,7 +286,7 @@ class SimulationRenderer3D:
         sin_y = math.sin(st.yaw)
         cabin_x = st.pos.x - cos_y * 0.4
         cabin_y = st.pos.y - sin_y * 0.4
-        m_cabin = self._create_transform_matrix(cabin_x, cabin_y, st.pos.z + 0.85, st.yaw)
+        m_cabin = self._create_transform_matrix(cabin_x, cabin_y, st.pos.z + 1.08, st.yaw)
         mvp_cabin = vp @ m_cabin
         self.prog_standard['u_mvp'].write(mvp_cabin.T.tobytes())
         self.prog_standard['u_model'].write(m_cabin.T.tobytes())
@@ -286,7 +298,7 @@ class SimulationRenderer3D:
         if self.mesh_wheel:
             wheel_transforms = vehicle.get_wheel_transforms()
             for (w_pos, steer_angle) in wheel_transforms:
-                m_wheel = self._create_transform_matrix(w_pos.x, w_pos.y, w_pos.z + 0.25, st.yaw + steer_angle)
+                m_wheel = self._create_transform_matrix(w_pos.x, w_pos.y, w_pos.z, st.yaw + steer_angle)
                 mvp_w = vp @ m_wheel
                 self.prog_standard['u_mvp'].write(mvp_w.T.tobytes())
                 self.prog_standard['u_model'].write(m_wheel.T.tobytes())

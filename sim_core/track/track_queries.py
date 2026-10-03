@@ -35,18 +35,21 @@ class TrackSpatialQueries:
         # sample, so positions beyond either end were previously classified
         # as "on road" with ~0 lateral offset. The road physically ends at
         # the first/last sample — anything beyond along the tangent is
-        # off the drivable surface.
+        # off the drivable surface. A 0.5 m tolerance keeps a spawn sitting
+        # exactly on the start/end face (fwd ~= 0 within float noise) from
+        # being classified off-road.
         if is_on_road and not self.track.spline.is_closed and self.track.spline.samples:
             tangent_2d = Vec2(sp.tangent.x, sp.tangent.y)
             to_pt = pos_2d - Vec2(sp.pos.x, sp.pos.y)
             fwd = to_pt.dot(tangent_2d)
             first = self.track.spline.samples[0]
             last = self.track.spline.samples[-1]
+            end_tol = 0.5
             if sp is last and fwd > 0.0:
                 past_course_end = True
             elif sp is first and fwd < 0.0:
                 past_course_end = True
-            if past_course_end:
+            if (sp is last and fwd > end_tol) or (sp is first and fwd < -end_tol):
                 is_on_road = False
 
         return {
@@ -58,6 +61,67 @@ class TrackSpatialQueries:
             'past_course_end': past_course_end,
             'road_width': sp.width,
             'elevation': sp.elevation,
+            'friction': sp.friction,
+            'banking': sp.banking,
+        }
+
+    def query_surface(self, pos_2d: Vec2) -> Dict[str, Any]:
+        """
+        Physical surface properties under a world position.
+
+        Returns:
+            region: 'road' | 'curb' | 'off' — road is |lateral| <= width/2,
+                curb is the authored curb band just outside it, off otherwise
+                (incl. past an open route's end).
+            friction_mult: local surface mu multiplier (control-point
+                friction on road; road_def.curb_friction / off_road_friction
+                beyond it).
+            banking_rad: road banking in radians (authored degrees; >0 means
+                the left edge is raised so gravity pulls toward -normal).
+            grade: road grade dz/ds (tangent z) — positive uphill.
+            normal_2d, tangent_2d: surface frame directions in world XY.
+            elevation: surface height at the closest sample.
+        """
+        s, lateral_offset, tangent_angle, sp = self.track.spline.get_closest_point(pos_2d)
+        road_def = self.track.road_def
+        curb_w = (road_def.boundary_config.curb_width
+                  if road_def and road_def.boundary_config.has_curbs else 0.0)
+        half_w = sp.width * 0.5
+
+        abs_lat = abs(lateral_offset)
+        if abs_lat <= half_w:
+            region = "road"
+            friction_mult = sp.friction
+        elif abs_lat <= half_w + curb_w:
+            region = "curb"
+            friction_mult = road_def.curb_friction if road_def else 0.85
+        else:
+            region = "off"
+            friction_mult = road_def.off_road_friction if road_def else 0.55
+
+        # Beyond an open route's ends the drivable surface simply ends.
+        if region != "off" and not self.track.spline.is_closed and self.track.spline.samples:
+            tangent_2d = Vec2(sp.tangent.x, sp.tangent.y)
+            to_pt = pos_2d - Vec2(sp.pos.x, sp.pos.y)
+            fwd = to_pt.dot(tangent_2d)
+            first = self.track.spline.samples[0]
+            last = self.track.spline.samples[-1]
+            # Same 0.5 m end tolerance as query_vehicle_pose.
+            if (sp is last and fwd > 0.5) or (sp is first and fwd < -0.5):
+                region = "off"
+                friction_mult = road_def.off_road_friction if road_def else 0.55
+
+        return {
+            'region': region,
+            'friction_mult': friction_mult,
+            'banking_rad': math.radians(sp.banking),
+            'grade': sp.tangent.z,
+            'normal_2d': Vec2(sp.normal.x, sp.normal.y),
+            'tangent_2d': Vec2(sp.tangent.x, sp.tangent.y).normalized(),
+            'elevation': sp.elevation,
+            'is_on_road': region != "off" and abs_lat <= half_w,
+            's': s,
+            'lateral_offset': lateral_offset,
         }
 
     def cast_ray(

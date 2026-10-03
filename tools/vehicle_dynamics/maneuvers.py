@@ -165,6 +165,74 @@ def lateral_disturbance(speed_ms: float, kick: float = 1.0,
         script=script, duration_s=duration, pre_roll_s=5.0)
 
 
+def s_curve(speed_ms: float, steer: float = 0.2, leg_s: float = 1.5,
+            duration: float = 7.0) -> Maneuver:
+    """V07: left-then-right S transition at cruise."""
+    thr = _throttle_for_speed(speed_ms)
+    def script(t):
+        if t < leg_s:
+            s = -steer
+        elif t < 2 * leg_s:
+            s = steer
+        else:
+            s = 0.0
+        return (s, thr, 0.0)
+    return Maneuver(
+        id=f"s_curve_{speed_ms:.0f}ms",
+        description=f"S-curve {-steer:+.2f} -> {steer:+.2f} -> 0 at ~{speed_ms} m/s",
+        script=script, duration_s=duration, pre_roll_s=5.0)
+
+
+def throttle_in_corner(steer: float, speed_ms: float, throttle: float = 1.0,
+                       apply_t: float = 2.0, duration: float = 6.0) -> Maneuver:
+    """V08: settled corner, then step to full throttle mid-corner."""
+    thr = _throttle_for_speed(speed_ms)
+    return Maneuver(
+        id=f"throttle_in_corner_{steer:+.2f}_{speed_ms:.0f}ms",
+        description=f"Corner {steer:+.2f} then throttle {throttle:.0%} at t={apply_t}s",
+        script=lambda t: (steer, thr if t < apply_t else throttle, 0.0),
+        duration_s=duration, pre_roll_s=5.0)
+
+
+def drift_initiation(speed_ms: float = 8.0, steer: float = 0.8,
+                     duration: float = 4.0) -> Maneuver:
+    """V11: provoked powerslide — large steer + full throttle."""
+    return Maneuver(
+        id=f"drift_initiation_{speed_ms:.0f}ms",
+        description=f"Steer {steer:+.2f} + full throttle from {speed_ms} m/s",
+        script=lambda t: (steer, 1.0, 0.0),
+        duration_s=duration, initial_speed=speed_ms)
+
+
+def drift_recovery(speed_ms: float = 8.0, steer: float = 0.8,
+                   provoke_s: float = 2.0, recover_s: float = 4.0) -> Maneuver:
+    """V12: provoke a slide, then release steering/throttle — must recover."""
+    def script(t):
+        if t < provoke_s:
+            return (steer, 1.0, 0.0)
+        return (0.0, 0.4, 0.0)
+    return Maneuver(
+        id=f"drift_recovery_{speed_ms:.0f}ms",
+        description=f"Provoked slide for {provoke_s}s then hands-off cruise",
+        script=script, duration_s=provoke_s + recover_s, initial_speed=speed_ms)
+
+
+def full_throttle_steer_correction(speed_ms: float = 0.0,
+                                   steer: float = 0.1, apply_t: float = 3.0,
+                                   duration: float = 8.0) -> Maneuver:
+    """V13b: full-throttle launch, then a small steering correction.
+
+    Regression maneuver for the friction-envelope allocation fix: under the
+    old demand-first ellipse this spun the car at ordinary throttle because
+    the driven axle's lateral capacity collapsed to zero.
+    """
+    return Maneuver(
+        id="full_throttle_steer_correction",
+        description=f"Full throttle launch, steer {steer:+.2f} at t={apply_t}s",
+        script=lambda t: (steer if t >= apply_t else 0.0, 1.0, 0.0),
+        duration_s=duration)
+
+
 def standard_suite(speed_ms: float = 20.0) -> Dict[str, Maneuver]:
     """The complete validation maneuver suite (spec section 13)."""
     return {m.id: m for m in [
@@ -180,4 +248,9 @@ def standard_suite(speed_ms: float = 20.0) -> Dict[str, Maneuver]:
         brake_and_steer(0.2, 0.8, speed_ms),
         lane_change(speed_ms),
         lateral_disturbance(speed_ms),
+        s_curve(speed_ms),
+        throttle_in_corner(0.15, 15.0, throttle=1.0),
+        drift_initiation(),
+        drift_recovery(),
+        full_throttle_steer_correction(),
     ]}

@@ -16,7 +16,7 @@ class ControlPoint:
     y: float
     z: float = 0.0
     width: float = 12.0
-    banking: float = 0.0  # In degrees or radians
+    banking: float = 0.0  # degrees; >0 = left edge raised (downhill toward -normal)
     friction: float = 1.0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -94,6 +94,11 @@ class RoadDefinition:
         self.spawn_point = SpawnPoint()
         self.num_checkpoints: int = 16
         self.default_friction: float = 1.0
+        # Surface friction multipliers applied off the asphalt region.
+        # The drivable "road" region is |lateral| <= width/2; the curb band
+        # extends curb_width further out; anything beyond is off-road.
+        self.curb_friction: float = 0.85
+        self.off_road_friction: float = 0.55
 
     def add_control_point(
         self,
@@ -115,6 +120,8 @@ class RoadDefinition:
             'spawn_point': self.spawn_point.to_dict(),
             'num_checkpoints': self.num_checkpoints,
             'default_friction': self.default_friction,
+            'curb_friction': self.curb_friction,
+            'off_road_friction': self.off_road_friction,
         }
 
     @classmethod
@@ -132,6 +139,8 @@ class RoadDefinition:
             road.spawn_point = SpawnPoint.from_dict(data['spawn_point'])
         road.num_checkpoints = int(data.get('num_checkpoints', 16))
         road.default_friction = float(data.get('default_friction', 1.0))
+        road.curb_friction = float(data.get('curb_friction', 0.85))
+        road.off_road_friction = float(data.get('off_road_friction', 0.55))
         return road
 
     @classmethod

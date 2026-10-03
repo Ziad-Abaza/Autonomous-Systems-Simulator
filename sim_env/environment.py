@@ -264,8 +264,14 @@ class SimulationEnvironment:
         self.last_termination_reason_dict = {"reason": "reset", "step": 0, "sim_time": 0.0}
 
         # Domain Randomization (Scenario Def or Legacy Config)
+        # The sampling rng is seeded per reset from BOTH the episode seed
+        # and the authored randomization.global_seed — per-reset variance
+        # without bypassing the authored seed.
         if self.scenario_def and self.scenario_def.randomization.enabled:
-            dr_params = self.scenario_def.randomization.sample_all(self.clock.rng)
+            dr_rng = np.random.default_rng(np.random.SeedSequence(
+                [int(reset_seed),
+                 int(self.scenario_def.randomization.global_seed)]))
+            dr_params = self.scenario_def.randomization.sample_all(dr_rng)
             mass_f = dr_params.get("vehicle_mass_mult", 1.0)
             tire_f = dr_params.get("tire_friction_mult", 1.0)
             surf_f = dr_params.get("surface_friction_mult", 1.0)
@@ -329,26 +335,78 @@ class SimulationEnvironment:
             spawn_yaw = math.radians(self.episode_config.custom_spawn_yaw_deg)
             init_speed = self.episode_config.initial_speed
 
+        # The vehicle model is planar: pos.z is a ground-reference height
+        # consumed by rendering, cameras, and vehicle-mounted sensors.
+        # Anchor it to the road surface elevation under the spawn pose so
+        # the car never spawns sunk into or floating above elevated road
+        # (authored sp.z remains the fallback when no spline exists).
+        spawn_z = sp.z
+        if self.track.spline.samples:
+            _, _, _, spawn_sample = self.track.spline.get_closest_point(
+                Vec2(spawn_x, spawn_y))
+            spawn_z = spawn_sample.pos.z
+
         self.vehicle.reset(
-            pos=Vec3(spawn_x, spawn_y, sp.z),
+            pos=Vec3(spawn_x, spawn_y, spawn_z),
             yaw=spawn_yaw,
             initial_speed=init_speed
         )
 
-        # Apply scenario target speed override to reward engine if configured
-        if self.scenario_def and self.scenario_def.target_speed_override is not None:
+        # Mirror authored scenario visual fields onto the legacy scenario
+        # so the renderer/HUD path (which reads self.scenario) sees the
+        # effective values — explicit ambient_light wins; otherwise it is
+        # derived from time_of_day.
+        if self.scenario_def:
+            self.scenario.weather = self.scenario_def.weather
+            self.scenario.time_of_day = self.scenario_def.time_of_day
+            self.scenario.ambient_light = (
+                self.scenario_def.ambient_light
+                if self.scenario_def.ambient_light != 1.0
+                else {"day": 1.0, "dusk": 0.6, "night": 0.25}.get(
+                    self.scenario_def.time_of_day, 1.0))
+
+        # Apply scenario target speed override to reward engines. The
+        # baseline is restored FIRST every reset so the override never
+        # leaks into a later scenario that does not set one.
+        if not hasattr(self, "_base_speed_targets"):
+            self._base_speed_targets = []
             if self.compiled_reward_engine:
                 for comp in self.compiled_reward_engine.active_components:
                     if comp.component_type == "speed":
-                        comp.params["target_speed_ms"] = float(self.scenario_def.target_speed_override)
+                        self._base_speed_targets.append(
+                            (comp, comp.params.get("target_speed_ms")))
+        for comp, base in self._base_speed_targets:
+            if base is not None:
+                comp.params["target_speed_ms"] = base
+        if hasattr(self.reward_engine, 'config'):
+            if not hasattr(self, "_base_legacy_target_speed"):
+                self._base_legacy_target_speed = getattr(
+                    self.reward_engine.config, "target_speed", None)
+            if self._base_legacy_target_speed is not None:
+                self.reward_engine.config.target_speed = \
+                    self._base_legacy_target_speed
+        if self.scenario_def and self.scenario_def.target_speed_override is not None:
+            for comp, _ in self._base_speed_targets:
+                comp.params["target_speed_ms"] = float(
+                    self.scenario_def.target_speed_override)
             if hasattr(self.reward_engine, 'config'):
-                self.reward_engine.config.target_speed = float(self.scenario_def.target_speed_override)
+                self.reward_engine.config.target_speed = float(
+                    self.scenario_def.target_speed_override)
 
-        # Apply scenario obstacle overrides if defined. Scenario-spawned
-        # entities are tagged so set_scenario()/reset() can replace them
-        # instead of accumulating duplicates.
+        # Apply scenario obstacle overrides if defined — authored
+        # obstacle_overrides AND legacy ScenarioConfig.obstacles. Scenario-
+        # spawned entities are tagged so set_scenario()/reset() replaces
+        # them instead of accumulating duplicates. Creation errors are
+        # collected and surfaced via info['scenario_warnings'], never
+        # silently dropped.
+        self._scenario_warnings = []
+        _obs_lists = []
         if self.scenario_def and self.scenario_def.obstacle_overrides:
-            for obs_data in self.scenario_def.obstacle_overrides:
+            _obs_lists.append(self.scenario_def.obstacle_overrides)
+        if getattr(self.scenario, "obstacles", None):
+            _obs_lists.append(self.scenario.obstacles)
+        for obs_list in _obs_lists:
+            for obs_data in obs_list:
                 try:
                     from sim_core.world.entity import create_entity
                     ent_type = obs_data.get("entity_type", "cone")
@@ -359,8 +417,10 @@ class SimulationEnvironment:
                     ent.name = obs_data.get("name", ent.name)
                     ent._scenario_spawned = True
                     self.add_entity(ent)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._scenario_warnings.append(
+                        f"scenario entity '{obs_data.get('name', ent_type)}' "
+                        f"failed to spawn: {e}")
 
         # Reset trackers and engines
         self.checkpoint_tracker.reset(start_time=0.0)
@@ -417,14 +477,28 @@ class SimulationEnvironment:
 
         self.last_action = [steer, throttle, brake]
 
-        # 2. Physics Step
+        # 2. Physics Step — surface properties are queried at the current
+        #    position: control-point friction, curb/off-road regions, banking
+        #    and grade all modulate the dynamics.
         prev_pos_2d = Vec2(self.vehicle.state.pos.x, self.vehicle.state.pos.y)
+        surf = self.track_queries.query_surface(prev_pos_2d)
+        step_friction = self.active_surface_friction * surf['friction_mult']
+        # Gravity bias: banking tilts the road plane (authored deg, >0 = left
+        # edge raised -> pull toward -normal); grade pulls along the tangent.
+        g = 9.81
+        n2d = surf['normal_2d']
+        t2d = surf['tangent_2d']
+        bank_pull = -g * math.sin(surf['banking_rad'])
+        grade_pull = -g * surf['grade']
+        world_bias = Vec2(bank_pull * n2d.x + grade_pull * t2d.x,
+                          bank_pull * n2d.y + grade_pull * t2d.y)
         self.vehicle.step(
             steering_cmd=steer,
             throttle_cmd=throttle,
             brake_cmd=brake,
             dt=dt,
-            surface_friction=self.active_surface_friction
+            surface_friction=step_friction,
+            world_accel_bias=world_bias
         )
         curr_pos_2d = Vec2(self.vehicle.state.pos.x, self.vehicle.state.pos.y)
 
@@ -445,6 +519,25 @@ class SimulationEnvironment:
         )
         is_colliding = bound_col.collided or obs_col.collided
 
+        # Contact response: detected contacts get a positional depenetration
+        # plus an inelastic impulse with Coulomb friction — barriers are
+        # physical walls, not just flags, and the response can only remove
+        # kinetic energy.
+        if bound_col.collided and bound_col.contact_seg is not None:
+            # Interior direction: opposite the lateral-offset side, so the
+            # contact resolves the car back onto the road even if its centre
+            # has just crossed the wall line.
+            lat = surf['lateral_offset']
+            hint = Vec2(-n2d.x if lat > 0.0 else n2d.x,
+                        -n2d.y if lat > 0.0 else n2d.y)
+            VehicleCollisionChecker.apply_boundary_contact(
+                self.vehicle, *bound_col.contact_seg, interior_hint=hint)
+        if obs_col.collided and obs_col.contact_obb is not None:
+            VehicleCollisionChecker.apply_obstacle_contact(
+                self.vehicle, obs_col.contact_obb)
+        if is_colliding:
+            curr_pos_2d = Vec2(self.vehicle.state.pos.x, self.vehicle.state.pos.y)
+
         # 4. Track Spatial Relationship
         track_info = self.track_queries.query_vehicle_pose(curr_pos_2d, self.vehicle.state.yaw)
         is_on_road = track_info['is_on_road']
@@ -452,6 +545,11 @@ class SimulationEnvironment:
         heading_error = track_info['heading_error']
         current_s = track_info['s']
         road_width = track_info['road_width']
+
+        # Keep the planar vehicle's reference height pinned to the road
+        # surface so the rendered mesh, chase camera, and mounted sensors
+        # follow track elevation instead of clipping through it.
+        self.vehicle.state.pos.z = track_info['elevation']
 
         # 5. Checkpoint Crossing
         cp_passed, lap_completed = self.checkpoint_tracker.update(
@@ -698,4 +796,5 @@ class SimulationEnvironment:
             'laps_completed': self.checkpoint_tracker.laps_completed,
             'lap_progress': self.checkpoint_tracker.get_progress_fraction(),
             'last_action': self.last_action,
+            'scenario_warnings': list(getattr(self, '_scenario_warnings', [])),
         }

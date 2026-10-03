@@ -51,6 +51,9 @@ class GeneratedTrack:
         # Spatial Hash Broadphase
         self.broadphase: Optional[SpatialHashGrid2D] = None
 
+        # Source road definition (surface parameters for physics queries)
+        self.road_def: Optional[RoadDefinition] = None
+
 
 
 class TrackMeshGenerator:
@@ -60,6 +63,7 @@ class TrackMeshGenerator:
     @staticmethod
     def generate(road_def: RoadDefinition, sample_step: float = 1.0) -> GeneratedTrack:
         track = GeneratedTrack()
+        track.road_def = road_def
         track.spline = TrackSpline(is_closed=road_def.is_closed)
         track.spline.build_from_control_points(
             [cp.to_dict() for cp in road_def.control_points],
