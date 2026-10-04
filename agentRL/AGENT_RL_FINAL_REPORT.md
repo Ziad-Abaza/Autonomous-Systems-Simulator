@@ -87,9 +87,9 @@ more training steps than the 60k budget.
 | E001 | single | Does SAC learn on the oval? | see ablation below |
 | E001b | single | initial_speed alone | negative — 0/271 episodes reach a checkpoint |
 | E001c | single | + PD demos | **evidence gate passed** |
-| E002 | single | recipe on serpentine | TBD |
+| E002 | single | recipe on serpentine | **negative** — 0 ckpts / −23 ret in 60k; tight S-curves defeat the recipe at this budget |
 | E003 | single | obstacle-mutated oval | **learned** — last-30 train ret 248; deterministic eval **853.3 ret, 0.688 lap, 11.6 m/s** |
-| E004 | mixed | simultaneous 4-track | **first run invalidated** — trainer stepped a stale env after track switch (79,593 step-after-done events); bug fixed + regression test added, 80k rerun in progress |
+| E004 | mixed | simultaneous 4-track | **learned all 4** — per-track train mean ret 236–400, max 10 ckpts; det. eval: oval 635/0.5 prog/0 coll, serpentine 450/0.25, gen_loops collide early. Serpentine learned better mixed than solo |
 | E005 | continual | oval→serpentine→gen_loop_0 + retention | **retention positive** (see below) |
 | E006 | eval | unseen gen_loop_4/5 generalization | **gen_loop_4: ret 1144, 0.875 lap, 12 m/s, 0 collisions**; gen_loop_5 partial (ret 274, 0.25) |
 | E007 | eval | obstacle generalization | oval ret 416.6 / 0.3 prog under 2-5 unseen obstacles; serpentine ret 153.6 |
