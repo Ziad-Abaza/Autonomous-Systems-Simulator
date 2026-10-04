@@ -97,6 +97,11 @@ class ContinualTrainer:
         state = self._load_state() if resume else \
             {"completed": 0, "cells": {}, "last_ckpt": None}
         start = int(state.get("completed", 0))
+        if resume and state.get("last_ckpt"):
+            # mid-run restart must reload the learned weights, not just
+            # skip completed phases — otherwise later phases train a
+            # fresh agent and eval cells compare against nothing
+            self.agent = type(self.agent).load(state["last_ckpt"])
         cells: dict[str, dict[str, dict]] = dict(state.get("cells", {}))
 
         for i, phase in enumerate(phases):

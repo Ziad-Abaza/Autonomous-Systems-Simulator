@@ -48,6 +48,17 @@ class ScenarioMutator:
         self.noise = noise
         self.scenario_id = scenario_id
         self._draw_count = 0
+        self._params = dict(
+            n_obstacles=n_obstacles, entity_types=entity_types,
+            lateral_frac=lateral_frac, s_range=s_range,
+            min_gap_m=min_gap_m, spawn_jitter=spawn_jitter,
+            spawn_yaw_jitter_deg=spawn_yaw_jitter_deg,
+            friction=friction, noise=noise, scenario_id=scenario_id)
+
+    def fork(self, seed: int) -> "ScenarioMutator":
+        """Independent mutator with the same params and a derived seed —
+        use per eval cell / per env so draws aren't order-coupled."""
+        return ScenarioMutator(seed=int(seed), **self._params)
 
     # ------------------------------------------------------------------ draw
 

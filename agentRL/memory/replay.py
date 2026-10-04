@@ -99,11 +99,19 @@ class TrackRehearsalBuffer:
         prev = self._previous_tracks()
         n_prev = int(batch * self.rehearsal_fraction) if prev else 0
         n_prev = min(n_prev, sum(len(self.buffers[t]) for t in prev))
+        if not len(cur):
+            # empty current buffer (fresh resume / first steps): draw
+            # the whole batch from previous tracks — never short it
+            n_prev = batch
         parts = [cur.sample(batch - n_prev)] if len(cur) else []
         if n_prev:
-            per = max(1, n_prev // len(prev))
-            for t in prev:
-                parts.append(self.buffers[t].sample(per))
+            # split n_prev across previous tracks as evenly as possible,
+            # distributing the remainder so the fraction is honored
+            base, rem = divmod(n_prev, len(prev))
+            for j, t in enumerate(prev):
+                per = base + (1 if j < rem else 0)
+                if per:
+                    parts.append(self.buffers[t].sample(per))
         merged = {
             k: np.concatenate([p[k] for p in parts]) for k in
             ("obs", "action", "reward", "next_obs", "done")

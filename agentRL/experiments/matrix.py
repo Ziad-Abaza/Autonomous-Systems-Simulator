@@ -149,6 +149,9 @@ def run_experiment(exp_id: str, run_dir: str | None = None,
                 t2 = make_trainer(factory, track, fresh,
                                   _dc_replace(tc, total_steps=half),
                                   mutator=mutator)
+                # replay contents aren't serialized — re-seed demos so
+                # the resumed critic doesn't relearn on a tiny buffer
+                _seed_demos(cfg, t2.env, fresh, mutator)
                 results[algo] = t2.train()
                 results[algo]["resumed_from"] = mid
             else:

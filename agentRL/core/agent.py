@@ -33,6 +33,8 @@ class BaseRLAgent(ABC):
         self.obs_spec = obs_spec
         self.act_space = {"low": np.asarray(act_space["low"], np.float32),
                           "high": np.asarray(act_space["high"], np.float32)}
+        if act_space.get("pos_only"):
+            self.act_space["pos_only"] = tuple(act_space["pos_only"])
         self.cfg = cfg
         self.adapter = ActionAdapter(
             self.act_space["low"], self.act_space["high"],

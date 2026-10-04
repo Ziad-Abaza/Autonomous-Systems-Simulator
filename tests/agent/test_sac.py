@@ -65,6 +65,28 @@ def test_checkpoint_roundtrip(tmp_path):
     assert loaded.train_state["steps"] == agent.train_state["steps"]
 
 
+def test_pos_only_brake_survives_roundtrip(tmp_path):
+    """Brake semantics must serialize — a loaded agent whose adapter
+    silently reverts to affine parks the car (raw 0 -> brake 0.5)."""
+    from agentRL.algos.sac import SACAgent
+    from agentRL.core.config import AgentConfig
+    from agentRL.obs.spec import ObservationSpec, PRESETS
+    spec = ObservationSpec(channel_names=PRESETS["state8"])
+    cfg = AgentConfig(algo_id="sac", hidden_sizes=(32, 32), lr=3e-4,
+                      gamma=0.99, extra={"seed": 0, "warmup": 8})
+    act_space = {"low": np.array([-1.0, 0.0, 0.0]),
+                 "high": np.array([1.0, 1.0, 1.0]),
+                 "pos_only": (2,)}
+    agent = SACAgent(obs_spec=spec, act_space=act_space, cfg=cfg)
+    path = tmp_path / "ck.pt"
+    agent.save(str(path))
+    loaded = SACAgent.load(str(path))
+    assert loaded.act_space.get("pos_only") == (2,)
+    # raw brake = 0 must stay released after reload
+    env_a = loaded.act_space_to_env(np.array([0.0, 0.0, 0.0]))
+    assert env_a[2] == 0.0
+
+
 def test_truncation_bootstrap():
     """Q target must bootstrap on truncation, not zero out."""
     agent = _agent()

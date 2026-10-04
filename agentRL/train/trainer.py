@@ -165,14 +165,16 @@ class SyncVectorEnv:
                  obs_spec, seed: int, mutator: ScenarioMutator | None = None):
         self.envs = [factory.build(track, seed=seed + i) for i in range(n)]
         self.encoders = [ObsEncoder(obs_spec) for _ in range(n)]
-        self.mutator = mutator
+        # per-env mutator forks — draws aren't coupled to step interleave
+        self.mutators = ([mutator.fork(seed + i * 977) for i in range(n)]
+                         if mutator is not None else None)
 
     def __len__(self) -> int:
         return len(self.envs)
 
     def reset_i(self, i: int) -> np.ndarray:
-        if self.mutator is not None:
-            self.mutator.draw_and_apply(self.envs[i])
+        if self.mutators is not None:
+            self.mutators[i].draw_and_apply(self.envs[i])
         obs, _ = self.envs[i].reset()
         self.encoders[i].reset()
         return np.asarray(obs, dtype=np.float32)
@@ -196,8 +198,10 @@ class OnPolicyTrainer:
         self.logger = MetricsLogger(cfg.run_dir)
         self.ckpt_dir = os.path.join(cfg.run_dir, "checkpoints")
         os.makedirs(self.ckpt_dir, exist_ok=True)
+        # use the POST-resume agent's spec — a checkpoint may carry a
+        # different observation layout than the template argument
         self.venv = SyncVectorEnv(factory, track, cfg.num_envs,
-                                  agent.obs_spec, cfg.seed, mutator)
+                                  self.agent.obs_spec, cfg.seed, mutator)
 
     def train(self) -> dict[str, Any]:
         t0 = time.time()
@@ -275,12 +279,17 @@ class TrackSampler:
     """
 
     def __init__(self, factory: EnvFactory, tracks: list[TrackSpec],
-                 seed: int):
+                 seed: int, mutator: ScenarioMutator | None = None):
         self.tracks = list(tracks)
         self.envs = {t.track_id: factory.build(t, seed=seed + i * 101)
                      for i, t in enumerate(tracks)}
         for t in self.tracks:
             setattr(self.envs[t.track_id], "_sampler_track", t.track_id)
+        # per-track mutator forks — each track's scenario stream is
+        # independent of which track was sampled before it
+        self.mutators = ({t.track_id: mutator.fork(seed + i * 997)
+                          for i, t in enumerate(tracks)}
+                         if mutator is not None else None)
         self._rng = np.random.default_rng(seed)
 
     def next(self):
@@ -295,7 +304,8 @@ class MixedTrackTrainer(OffPolicyTrainer):
                  agent: BaseRLAgent, cfg: TrainConfig,
                  mutator: ScenarioMutator | None = None,
                  eval_fn=None):
-        self.sampler = TrackSampler(factory, tracks, cfg.seed)
+        self.sampler = TrackSampler(factory, tracks, cfg.seed,
+                                    mutator=mutator)
         super().__init__(factory, tracks[0], agent, cfg, mutator, eval_fn)
 
     def _new_episode(self) -> np.ndarray:
@@ -303,8 +313,9 @@ class MixedTrackTrainer(OffPolicyTrainer):
         mem = getattr(self.agent, "memory", None)
         if mem is not None and hasattr(mem, "begin_track"):
             mem.begin_track(self.env._sampler_track)
-        if self.mutator is not None:
-            self.mutator.draw_and_apply(self.env)
+        if self.sampler.mutators is not None:
+            self.sampler.mutators[self.env._sampler_track] \
+                .draw_and_apply(self.env)
         obs, _ = self.env.reset()
         self.agent.encoder.reset()
         self.agent.adapter.reset()

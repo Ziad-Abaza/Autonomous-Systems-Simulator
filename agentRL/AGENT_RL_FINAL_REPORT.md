@@ -185,6 +185,26 @@ The 8-channel subset moves fast (9.9 m/s) but never holds the racing
 line — the extra channels (checkpoint distance, waypoint preview,
 steering state) carry the information cornering needs.
 
+### Fresh-context review fixes (post-run audit)
+
+An independent read-only review of `agentRL/` surfaced and fixed:
+
+- **`pos_only` brake dropped on checkpoint load** — loaded agents could
+  revert to affine brake mapping (the parking bug's return path).
+  Now serialized in `act_space`; regression test added.
+- **ContinualTrainer resume never reloaded weights** — `last_ckpt` was
+  persisted but unused; `resume=True` now loads it.
+- **PPO importance-ratio bias** — `logp` was computed on the unclipped
+  sample while the buffer stored the clipped action; now evaluated at
+  the clipped action.
+- **Mutator RNG order-coupling** — one mutator streamed draws across
+  eval cells/envs/tracks; `fork(seed)` gives each cell/track/env an
+  independent stream → per-cell reproducible scenarios.
+- **Rehearsal quantization** — remainder now distributed across track
+  buffers; empty current buffer draws a full batch from previous tracks.
+- **Eval length** — counted locally, no longer trusts `info["step"]`.
+- **On-policy resume** — vector env now uses the *loaded* agent's obs spec.
+
 ## 6. Known limitations
 
 - CPU-only training (~30-48 env-steps/s); 60k steps ≈ 30 min/run.

@@ -37,17 +37,19 @@ def evaluate_policy(
 
     for seed in seeds:
         if mutator is not None:
-            mutator.draw_and_apply(env)
+            # per-seed fork: cell determinism independent of call order
+            mutator.fork(int(seed)).draw_and_apply(env)
         obs, _ = env.reset(seed=int(seed))
         encoder.reset()
         encoded = encoder.encode(np.asarray(obs, np.float32), None)
         ret, speed, flips, prev_steer = 0.0, 0.0, 0, 0.0
         lat_max, lat_sum = 0.0, 0.0
-        head_sum = 0.0
+        head_sum, n_steps = 0.0, 0
         info: dict[str, Any] = {}
         for _ in range(max_steps):
             a_env, _ = agent.act(encoded, deterministic=True)
             nobs, reward, terminated, truncated, info = env.step(a_env)
+            n_steps += 1
             ret += float(reward)
             speed += float(info.get("speed", 0.0))
             lat = abs(float(info.get("lateral_offset", 0.0)))
@@ -65,7 +67,7 @@ def evaluate_policy(
             # eval horizon cut — semantically a max_steps truncation
             terminated, truncated = False, True
             info["termination_reason"] = "max_steps"
-        steps = max(1, int(info.get("step", 0)) or 1)
+        steps = max(1, n_steps)  # local count — never trust info["step"]
         ep = {
             "seed": int(seed), "return": ret, "length": steps,
             "mean_speed": speed / steps,

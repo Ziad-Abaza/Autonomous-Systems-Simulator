@@ -94,7 +94,10 @@ class PPOAgent(BaseRLAgent):
             o = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
             dist = self.actor.dist(o)
             raw = dist.mean if deterministic else dist.sample()
-            logp = dist.log_prob(raw).sum(-1)
+            # logp evaluated at the SAME action the env sees (clipped);
+            # otherwise the stored act != the logp_old and the PPO ratio
+            # is biased whenever |raw| > 1.
+            logp = dist.log_prob(torch.clamp(raw, -1.0, 1.0)).sum(-1)
             value = self.critic(o)
         raw_np = np.clip(raw.squeeze(0).numpy(), -1.0, 1.0).astype(np.float32)
         return self.act_space_to_env(raw_np), {
@@ -211,7 +214,8 @@ class PPOAgent(BaseRLAgent):
             "agent_config": self.cfg.to_dict(),
             "obs_spec": self.obs_spec.to_dict(),
             "act_space": {"low": self.act_space["low"].tolist(),
-                          "high": self.act_space["high"].tolist()},
+                          "high": self.act_space["high"].tolist(),
+                          "pos_only": list(self.act_space.get("pos_only", ()))},
             "torch": {
                 "actor": self.actor.state_dict(),
                 "critic": self.critic.state_dict(),
@@ -234,7 +238,8 @@ class PPOAgent(BaseRLAgent):
         spec = ObservationSpec.from_dict(payload["obs_spec"])
         cfg = AgentConfig.from_dict(payload["agent_config"])
         act_space = {"low": np.asarray(payload["act_space"]["low"], np.float32),
-                     "high": np.asarray(payload["act_space"]["high"], np.float32)}
+                     "high": np.asarray(payload["act_space"]["high"], np.float32),
+                     "pos_only": tuple(payload["act_space"].get("pos_only", ()))}
         agent = cls(spec, act_space, cfg)
         agent.actor.load_state_dict(payload["torch"]["actor"])
         agent.critic.load_state_dict(payload["torch"]["critic"])

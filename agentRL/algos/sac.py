@@ -266,7 +266,8 @@ class SACAgent(BaseRLAgent):
             "agent_config": self.cfg.to_dict(),
             "obs_spec": self.obs_spec.to_dict(),
             "act_space": {"low": self.act_space["low"].tolist(),
-                          "high": self.act_space["high"].tolist()},
+                          "high": self.act_space["high"].tolist(),
+                          "pos_only": list(self.act_space.get("pos_only", ()))},
             "torch": self._torch_state(),
             "train_state": dict(self.train_state),
             "memory_meta": self.memory.state_dict() if self.memory else {},
@@ -285,7 +286,8 @@ class SACAgent(BaseRLAgent):
         spec = ObservationSpec.from_dict(payload["obs_spec"])
         cfg = AgentConfig.from_dict(payload["agent_config"])
         act_space = {"low": np.asarray(payload["act_space"]["low"], np.float32),
-                     "high": np.asarray(payload["act_space"]["high"], np.float32)}
+                     "high": np.asarray(payload["act_space"]["high"], np.float32),
+                     "pos_only": tuple(payload["act_space"].get("pos_only", ()))}
         agent = cls(spec, act_space, cfg)
         agent._load_torch_state(payload["torch"])
         agent.train_state.update(payload.get("train_state", {}))
