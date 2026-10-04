@@ -106,4 +106,5 @@ agentRL/runs/
 
 # Phase 7.5 QA screenshot evidence (kept on disk, not tracked)
 assets/screenshots/qa/
+master_audit_out/
 
