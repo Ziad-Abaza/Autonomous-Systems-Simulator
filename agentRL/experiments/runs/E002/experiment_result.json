@@ -1,0 +1,27 @@
+{
+  "id": "E002",
+  "kind": "single",
+  "name": "Curves - serpentine",
+  "algo": "sac",
+  "track": "serpentine",
+  "steps": 60000,
+  "obs_preset": "full23",
+  "seed": 42,
+  "eval_episodes": 3,
+  "initial_speed": 8.0,
+  "demos": {
+    "steps": 15000
+  },
+  "agent_overrides": {
+    "warmup": 500,
+    "batch": 256
+  },
+  "results": {
+    "sac": {
+      "timesteps": 60000,
+      "episodes": 390,
+      "run_dir": "D:\\coding\\projects\\Simulation\\agentRL\\experiments\\runs\\E002\\sac",
+      "wall_s": 2478.04
+    }
+  }
+}

@@ -209,6 +209,11 @@ class _Tokens:
 THEME_NAME = "dark"
 C = _Tokens(_DARK)
 
+# Fixed dark-palette tokens — for surfaces that stay dark regardless of
+# the active theme (viewport HUD overlay cards). Using theme tokens on
+# those panels produces dark-on-dark invisible text in light themes.
+DARK_C = _Tokens(_DARK)
+
 
 def set_theme(name: str) -> None:
     """Activates a registered palette id; unknown ids fall back to dark."""

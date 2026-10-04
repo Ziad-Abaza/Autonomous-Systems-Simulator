@@ -8,7 +8,7 @@ import math
 from typing import Dict, Any, List, Optional, Tuple
 import pygame
 import numpy as np
-from sim_ui.theme import C
+from sim_ui.theme import C, DARK_C
 
 
 class SimulationHUD:
@@ -111,6 +111,10 @@ class SimulationHUD:
         fonts: Dict[str, pygame.font.Font]
     ) -> None:
         """Draws left-side vehicle telemetry overlay."""
+        # This panel is a fixed dark translucent card over the 3D viewport
+        # regardless of the active UI theme — always use dark-palette
+        # tokens or light themes render dark-on-dark invisible text.
+        C = DARK_C
         w, h = 260, 240
         pygame.draw.rect(surface, (18, 22, 30, 210), (x, y, w, h), border_radius=6)
         pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=6)
@@ -175,6 +179,8 @@ class SimulationHUD:
         fonts: Dict[str, pygame.font.Font]
     ) -> None:
         """Draws live reward decomposition inspector panel."""
+        # Fixed dark overlay card — always dark-palette tokens.
+        C = DARK_C
         w, h = 300, 280
         pygame.draw.rect(surface, (18, 22, 30, 210), (x, y, w, h), border_radius=6)
         pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=6)
@@ -229,6 +235,8 @@ class SimulationHUD:
         fonts: Dict[str, pygame.font.Font]
     ) -> None:
         """Renders Picture-in-Picture synthetic camera sensor preview."""
+        # Fixed dark overlay card — always dark-palette tokens.
+        C = DARK_C
         w, h = 140, 140
         pygame.draw.rect(surface, (18, 22, 30, 230), (x, y, w, h + 24), border_radius=6)
         pygame.draw.rect(surface, C.border, (x, y, w, h + 24), 1, border_radius=6)
@@ -315,6 +323,8 @@ class SimulationHUD:
         fonts: Dict[str, pygame.font.Font]
     ) -> List[Tuple[pygame.Rect, str]]:
         """Editor side panel showing selected control point properties and actions."""
+        # Fixed dark overlay card — always dark-palette tokens.
+        C = DARK_C
         w, h = 260, 310
         pygame.draw.rect(surface, (18, 22, 30, 220), (x, y, w, h), border_radius=6)
         pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=6)
@@ -394,6 +404,8 @@ class SimulationHUD:
         Renders detailed Observation Inspector overlay explicitly separating
         Agent Observation (AI perception) from Privileged Oracle Telemetry.
         """
+        # Fixed dark overlay card — always dark-palette tokens.
+        C = DARK_C
         w, h = 620, 360
         pygame.draw.rect(surface, (14, 18, 26, 240), (x, y, w, h), border_radius=8)
         pygame.draw.rect(surface, C.border, (x, y, w, h), 1, border_radius=8)

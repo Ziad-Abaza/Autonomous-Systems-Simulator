@@ -1,0 +1,33 @@
+{
+  "id": "E004",
+  "kind": "mixed",
+  "name": "Mixed multi-track sampling",
+  "algo": "sac",
+  "tracks": [
+    "oval",
+    "serpentine",
+    "gen_loop_0",
+    "gen_loop_1"
+  ],
+  "steps": 80000,
+  "obs_preset": "full23",
+  "seed": 42,
+  "eval_episodes": 3,
+  "initial_speed": 8.0,
+  "demos": {
+    "steps": 20000
+  },
+  "agent_overrides": {
+    "warmup": 500,
+    "batch": 256,
+    "rehearsal_fraction": 0.25
+  },
+  "results": {
+    "sac": {
+      "timesteps": 80000,
+      "episodes": 207,
+      "run_dir": "D:\\coding\\projects\\Simulation\\agentRL\\experiments\\runs\\E004\\sac",
+      "wall_s": 2982.39
+    }
+  }
+}
